@@ -1,11 +1,14 @@
 import React from 'react';
 import { motion } from 'framer-motion';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '../ui/Button';
 import { Container } from '../ui/Container';
 import { GlowBackground, GridPattern } from '../ui/GlowBackground';
 import { heroContent } from '../../lib/content';
 
 const Hero = () => {
+  const navigate = useNavigate();
+  
   return (
     <section className="relative min-h-screen flex items-center justify-center overflow-hidden pt-20" data-testid="hero-section">
       {/* Animated Background */}
@@ -81,7 +84,7 @@ const Hero = () => {
             transition={{ duration: 0.8, delay: 0.6 }}
             className="flex flex-col sm:flex-row gap-4 justify-center items-center"
           >
-            <Button variant="primary" size="lg" data-testid="cta-generate">
+            <Button variant="primary" size="lg" data-testid="cta-generate" onClick={() => navigate('/upload')}>
               {heroContent.primaryCTA} →
             </Button>
             <Button variant="secondary" size="lg" data-testid="cta-demo">

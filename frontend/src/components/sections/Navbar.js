@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useNavigate } from 'react-router-dom';
 import { Container } from '../ui/Container';
 import { navigation } from '../../lib/content';
 
 const Navbar = () => {
+  const navigate = useNavigate();
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   
@@ -71,10 +73,11 @@ const Navbar = () => {
             <motion.button
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
+              onClick={() => navigate('/upload')}
               className="glass-effect px-6 py-2 rounded-lg font-semibold text-white border border-cyber-purple/30 hover:border-cyber-purple hover:glow-purple transition-all duration-300"
               data-testid="nav-cta"
             >
-              Get Started
+              Start Creating
             </motion.button>
           </div>
           
