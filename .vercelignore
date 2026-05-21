@@ -1,0 +1,15 @@
+# Backend folder (not needed for frontend deployment)
+backend/
+
+# Test and development files
+.screenshots/
+test_reports/
+*.log
+
+# Environment files
+.env.local
+.env.development
+
+# Documentation
+plan.md
+memory/
