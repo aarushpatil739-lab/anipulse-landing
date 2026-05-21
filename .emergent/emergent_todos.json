@@ -1,0 +1,14 @@
+[
+  {
+    "content": "Phase 2: Performance optimization and accessibility check",
+    "status": "completed"
+  },
+  {
+    "content": "Phase 2: All user stories covered in development and testing",
+    "status": "pending"
+  },
+  {
+    "content": "Phase 2: End to End Testing using Testing Agent",
+    "status": "in_progress"
+  }
+]
