@@ -19,13 +19,24 @@ from models.upload_session import UploadSession
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
+# Environment configuration
+MONGO_URL = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
+DB_NAME = os.environ.get('DB_NAME', 'anipulse')
+CORS_ORIGINS = os.environ.get('CORS_ORIGINS', '*').split(',')
+PORT = int(os.environ.get('PORT', 8000))
+
 # MongoDB connection
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+client = AsyncIOMotorClient(MONGO_URL)
+db = client[DB_NAME]
 
 # Create the main app without a prefix
-app = FastAPI()
+app = FastAPI(
+    title="AniPulse API",
+    description="AI-powered anime video editing API",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
@@ -207,16 +218,19 @@ async def get_status_checks():
     
     return status_checks
 
-# Include the router in the main app
-app.include_router(api_router)
 
+# Configure CORS with environment-based origins
 app.add_middleware(
     CORSMiddleware,
+    allow_origins=CORS_ORIGINS,  # Frontend URLs
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
+
+# Include the API router
+app.include_router(api_router)
 
 # Configure logging
 logging.basicConfig(
@@ -225,6 +239,66 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Health check endpoint
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for Railway"""
+    try:
+        # Test MongoDB connection
+        await db.command("ping")
+        return {
+            "status": "healthy",
+            "database": "connected",
+            "service": "anipulse-backend"
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return {
+            "status": "unhealthy",
+            "database": "disconnected",
+            "error": str(e)
+        }
+
+@app.on_event("startup")
+async def startup_event():
+    """Startup event handler"""
+    logger.info("Starting AniPulse Backend API")
+    logger.info(f"MongoDB: {MONGO_URL}")
+    logger.info(f"Database: {DB_NAME}")
+    logger.info(f"CORS Origins: {CORS_ORIGINS}")
+    logger.info(f"Port: {PORT}")
+    
+    # Test MongoDB connection
+    try:
+        await db.command("ping")
+        logger.info("MongoDB connection successful")
+    except Exception as e:
+        logger.error(f"MongoDB connection failed: {e}")
+
 @app.on_event("shutdown")
 async def shutdown_db_client():
+    """Shutdown event handler"""
+    logger.info("Shutting down AniPulse Backend API")
     client.close()
+
+# Root endpoint
+@app.get("/")
+async def root():
+    """Root endpoint"""
+    return {
+        "service": "AniPulse Backend API",
+        "version": "1.0.0",
+        "status": "running",
+        "docs": "/docs",
+        "health": "/health"
+    }
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "server:app",
+        host="0.0.0.0",
+        port=PORT,
+        reload=False,  # Set to False in production
+        log_level="info"
+    )
