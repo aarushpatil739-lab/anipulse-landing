@@ -1,42 +1,6 @@
 [
   {
-    "content": "Phase 3: Frontend - Create Upload page component",
-    "status": "completed"
-  },
-  {
-    "content": "Phase 3: Frontend - Build drag-and-drop video upload zone",
-    "status": "completed"
-  },
-  {
-    "content": "Phase 3: Frontend - Build audio upload zone",
-    "status": "completed"
-  },
-  {
-    "content": "Phase 3: Frontend - Create file card components with previews",
-    "status": "completed"
-  },
-  {
-    "content": "Phase 3: Frontend - Implement progress tracking UI",
-    "status": "completed"
-  },
-  {
-    "content": "Phase 3: Frontend - Add file validation and error handling",
-    "status": "completed"
-  },
-  {
-    "content": "Phase 3: Frontend - Add remove file functionality",
-    "status": "completed"
-  },
-  {
-    "content": "Phase 3: Frontend - Add 'Process Now' button",
-    "status": "completed"
-  },
-  {
-    "content": "Phase 3: Frontend - Add route to navigation",
-    "status": "completed"
-  },
-  {
     "content": "Phase 3: Testing - End-to-end upload workflow testing",
-    "status": "in_progress"
+    "status": "completed"
   }
 ]
