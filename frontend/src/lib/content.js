@@ -1,4 +1,4 @@
-// Content configuration for CyberEdit landing page
+// Content configuration for AniPulse landing page
 
 export const navigation = [
   { name: 'Features', href: '#features' },

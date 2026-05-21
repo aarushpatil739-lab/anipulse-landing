@@ -22,14 +22,14 @@ const Footer = () => {
           <div className="md:col-span-2">
             <div className="flex items-center gap-2 mb-4">
               <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-cyber-purple to-cyber-cyan flex items-center justify-center font-bold text-white text-xl glow-purple">
-                C
+                A
               </div>
               <span className="text-2xl font-bold text-white">
-                Cyber<span className="text-gradient">Edit</span>
+                Ani<span className="text-gradient">Pulse</span>
               </span>
             </div>
             <p className="text-gray-400 mb-6 max-w-md">
-              AI-powered anime video editing for the next generation of creators. 
+              AI-powered anime video editing that pulses with creativity. 
               Turn your clips into viral masterpieces in seconds.
             </p>
             
@@ -95,7 +95,7 @@ const Footer = () => {
         <div className="pt-8 border-t border-white/10">
           <div className="flex flex-col md:flex-row justify-between items-center gap-4">
             <p className="text-gray-400 text-sm">
-              © {new Date().getFullYear()} CyberEdit. All rights reserved.
+              © {new Date().getFullYear()} AniPulse. All rights reserved.
             </p>
             
             <div className="flex gap-6 text-sm">

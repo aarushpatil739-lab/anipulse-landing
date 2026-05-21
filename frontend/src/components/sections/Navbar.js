@@ -44,10 +44,10 @@ const Navbar = () => {
           >
             <div className="flex items-center gap-2">
               <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-cyber-purple to-cyber-cyan flex items-center justify-center font-bold text-white text-xl glow-purple">
-                C
+                A
               </div>
               <span className="text-2xl font-bold text-white">
-                Cyber<span className="text-gradient">Edit</span>
+                Ani<span className="text-gradient">Pulse</span>
               </span>
             </div>
           </motion.div>
