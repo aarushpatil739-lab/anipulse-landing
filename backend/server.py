@@ -6,7 +6,7 @@ import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List
+from typing import List, Optional, Dict, Any
 import uuid
 from datetime import datetime, timezone
 from fastapi import UploadFile, File, HTTPException
@@ -205,11 +205,198 @@ async def process_session(session_id: str):
 
 
 
+# ========== GENERATION ENDPOINTS ==========
+
+from models.generation_job import GenerationJobService, GenerationJob, JobStatus
+from services.processing_queue import ProcessingQueue
+from fastapi.responses import FileResponse
+
+# Initialize generation services
+generation_job_service = GenerationJobService(db)
+processing_queue: Optional[ProcessingQueue] = None
+
+class GenerateRequest(BaseModel):
+    """Request to generate AMV"""
+    session_id: str = Field(..., description="Upload session ID")
+    style: str = Field("amv_default", description="Generation style")
+    max_duration: float = Field(180.0, description="Maximum output duration in seconds")
+
+@api_router.post("/generate")
+async def generate_amv(request: GenerateRequest):
+    """
+    Start AMV generation for an upload session
+    
+    Returns job_id for tracking progress
+    """
+    try:
+        # Validate session exists and is ready
+        session = await upload_service.get_session(request.session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        if not session.is_ready_to_process():
+            raise HTTPException(
+                status_code=400,
+                detail="Session not ready: need at least 1 video and 1 audio file"
+            )
+        
+        # Prepare clip metadata
+        clips_metadata = []
+        for video in session.videos:
+            # Convert relative storage_key to absolute path
+            video_path = f"/app/backend/uploads/{video.storage_key}"
+            clips_metadata.append({
+                "path": video_path,
+                "duration": 10.0,  # Default duration (will be probed by FFmpeg)
+                "width": 1920,
+                "height": 1080,
+                "fps": 30.0,
+                "bitrate": 500000,
+                "has_audio": True
+            })
+        
+        # Prepare audio metadata
+        audio_path = f"/app/backend/uploads/{session.audio.storage_key}"
+        audio_metadata = {
+            "path": audio_path,
+            "duration": 180.0  # Default duration (will be determined by audio analyzer)
+        }
+        
+        # Create generation job
+        job = await generation_job_service.create_job(
+            session_id=request.session_id,
+            clips=clips_metadata,
+            audio=audio_metadata,
+            style=request.style
+        )
+        
+        # Enqueue job
+        if processing_queue:
+            await processing_queue.enqueue_job(job)
+        else:
+            raise HTTPException(status_code=503, detail="Processing queue not available")
+        
+        logger.info(f"Generation job {job.job_id} created and enqueued for session {request.session_id}")
+        
+        return {
+            "success": True,
+            "job_id": job.job_id,
+            "status": job.status.value,
+            "message": "Generation started"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error starting generation: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/generate/{job_id}/status")
+async def get_generation_status(job_id: str):
+    """
+    Get generation job status and progress
+    """
+    try:
+        job = await generation_job_service.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        return {
+            "success": True,
+            **job.get_public_status()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting job status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/generate/{job_id}/timeline")
+async def get_generation_timeline(job_id: str):
+    """
+    Get generated timeline JSON
+    """
+    try:
+        job = await generation_job_service.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        if not job.timeline:
+            raise HTTPException(status_code=404, detail="Timeline not yet generated")
+        
+        return {
+            "success": True,
+            "job_id": job.job_id,
+            "timeline": job.timeline.model_dump()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting timeline: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/generate/{job_id}/download")
+async def download_generated_video(job_id: str):
+    """
+    Download generated AMV video
+    """
+    try:
+        job = await generation_job_service.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        if job.status != JobStatus.COMPLETED:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Job not completed yet (status: {job.status.value})"
+            )
+        
+        if not job.export or not job.export.path:
+            raise HTTPException(status_code=404, detail="Export file not found")
+        
+        export_path = Path(job.export.path)
+        if not export_path.exists():
+            raise HTTPException(status_code=404, detail="Export file does not exist")
+        
+        return FileResponse(
+            path=str(export_path),
+            media_type="video/mp4",
+            filename=f"anipulse_{job_id}.mp4"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error downloading video: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/generate/queue/stats")
+async def get_queue_stats():
+    """Get processing queue statistics"""
+    try:
+        if processing_queue:
+            stats = processing_queue.get_queue_stats()
+            return {
+                "success": True,
+                **stats
+            }
+        else:
+            return {
+                "success": False,
+                "error": "Processing queue not initialized"
+            }
+    except Exception as e:
+        logger.error(f"Error getting queue stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
 # ========== FFMPEG TEST ENDPOINTS ==========
 
 from services.ffmpeg_utils import FFmpegUtils, FFmpegError
 from fastapi import BackgroundTasks
-from typing import Optional, Dict, Any
 import tempfile
 import shutil
 import subprocess
@@ -533,6 +720,8 @@ async def health_check():
 @app.on_event("startup")
 async def startup_event():
     """Startup event handler"""
+    global processing_queue
+    
     logger.info("Starting AniPulse Backend API")
     logger.info(f"MongoDB: {MONGO_URL}")
     logger.info(f"Database: {DB_NAME}")
@@ -545,11 +734,30 @@ async def startup_event():
         logger.info("MongoDB connection successful")
     except Exception as e:
         logger.error(f"MongoDB connection failed: {e}")
+    
+    # Initialize and start processing queue
+    try:
+        processing_queue = ProcessingQueue(db)
+        await processing_queue.start()
+        logger.info("Processing queue started successfully")
+    except Exception as e:
+        logger.error(f"Failed to start processing queue: {e}")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
     """Shutdown event handler"""
+    global processing_queue
+    
     logger.info("Shutting down AniPulse Backend API")
+    
+    # Stop processing queue
+    if processing_queue:
+        try:
+            await processing_queue.stop()
+            logger.info("Processing queue stopped")
+        except Exception as e:
+            logger.error(f"Error stopping processing queue: {e}")
+    
     client.close()
 
 # Root endpoint

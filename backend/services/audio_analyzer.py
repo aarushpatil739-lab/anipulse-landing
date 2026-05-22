@@ -81,8 +81,10 @@ class AudioAnalyzer:
         spec = np.abs(librosa.stft(y))
         flux = np.sqrt(np.sum(np.diff(spec, axis=1)**2, axis=0))
         
-        # Smooth flux
-        flux_smooth = librosa.util.smooth(flux, 3)
+        # Smooth flux (simple moving average instead of librosa.util.smooth which was removed)
+        kernel_size = 3
+        kernel = np.ones(kernel_size) / kernel_size
+        flux_smooth = np.convolve(flux, kernel, mode='same')
         
         # Find peaks in flux (potential drops)
         peaks = librosa.util.peak_pick(

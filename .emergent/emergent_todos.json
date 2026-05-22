@@ -1,22 +1,18 @@
 [
   {
-    "content": "Build AI Timeline Generator service integrating pacing and clip selection",
+    "content": "Add generation API endpoints (generate, status, timeline, download)",
     "status": "completed"
   },
   {
-    "content": "Build Render Service that executes timeline using FFmpegUtils",
+    "content": "Update frontend Upload page with Generate AMV button and progress UI",
+    "status": "pending"
+  },
+  {
+    "content": "Create end-to-end generation pipeline test",
     "status": "in_progress"
   },
   {
-    "content": "Build async processing queue + background worker system",
-    "status": "pending"
-  },
-  {
-    "content": "Add generation API endpoints (generate, status, timeline, download)",
-    "status": "pending"
-  },
-  {
-    "content": "Test full generation pipeline end-to-end with uploaded clips",
+    "content": "Test full MVP: upload → generate → download workflow",
     "status": "pending"
   }
 ]
