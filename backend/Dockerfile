@@ -56,7 +56,8 @@ RUN pip install --upgrade pip setuptools wheel \
 COPY . /app
 
 # Pre-create runtime directories so non-root users (Railway) can write
-RUN mkdir -p /app/temp /app/logs /app/uploads /app/exports /app/temp/jobs /app/exports/jobs
+RUN mkdir -p /app/temp /app/logs /app/uploads /app/exports /app/temp/jobs /app/exports/jobs \
+    && chmod +x /app/start.sh
 
 # -----------------------------------------------------------------------------
 # 5) Healthcheck
@@ -66,11 +67,11 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
 
 # -----------------------------------------------------------------------------
 # 6) Startup
-#    - Runs verify_deps.py first (logs ffmpeg/ffprobe versions, writes JSON
-#      status to /app/logs/deps_status.json).  We DO NOT exit on failure here;
-#      the API will return HTTP 503 with a clear message instead of crashing.
-#    - Then launches uvicorn.
+#    The /app/start.sh script handles verify_deps.py + uvicorn launch
+#    with proper line-buffered logging and error handling. It is the
+#    SINGLE source of truth for how the process starts (used by both
+#    Docker CMD and Railway startCommand).
 # -----------------------------------------------------------------------------
 EXPOSE 8000
 
-CMD ["sh", "-c", "python verify_deps.py || true; exec uvicorn server:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --log-level info"]
+CMD ["/app/start.sh"]

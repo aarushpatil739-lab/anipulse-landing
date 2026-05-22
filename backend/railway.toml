@@ -1,9 +1,9 @@
-# Railway deployment configuration (TOML mirror of railway.json)
-# When both files exist, railway.json takes precedence on the platform.
-# This file is kept as documentation / Nixpacks fallback.
+# Railway deployment configuration
+# Note: when both railway.json and railway.toml are present,
+# railway.json takes precedence.
 
 [deploy]
-startCommand = "python verify_deps.py || true; exec uvicorn server:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --log-level info --timeout-keep-alive 65"
+startCommand = "sh /app/start.sh"
 healthcheckPath = "/health"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
