@@ -280,14 +280,15 @@ class FFmpegUtils:
     
     async def concatenate(self, video_paths: List[str], output_path: Optional[str] = None) -> str:
         """
-        Concatenate multiple video clips
-        
-        Args:
-            video_paths: List of video file paths
-            output_path: Output path (optional)
-            
-        Returns:
-            Path to concatenated video
+        Concatenate multiple video clips.
+
+        Strategy:
+        1. Try the fast `concat demuxer + -c copy` path first.  This works
+           when every input clip has identical codec parameters.
+        2. If that fails (rc=1, usually because the upstream clips have
+           mismatched resolutions / fps / codecs), retry with the
+           concat *filter* which re-encodes and normalises everything to
+           1280x720@30 + libx264 + aac.  Slower but bulletproof.
         """
         try:
             if len(video_paths) == 0:
@@ -299,7 +300,7 @@ class FFmpegUtils:
             if output_path is None:
                 output_path = str(self.temp_dir / f"concat_{uuid.uuid4().hex}.mp4")
             
-            logger.info(f"Concatenating {len(video_paths)} videos")
+            logger.info(f"Concatenating {len(video_paths)} videos (fast path: demuxer + -c copy)")
             
             # Create concat demuxer file
             concat_file = self.temp_dir / f"concat_{uuid.uuid4().hex}.txt"
@@ -318,23 +319,91 @@ class FFmpegUtils:
                 output_path
             ]
             
-            await self._run_command(
-                cmd,
-                timeout=300,
-                operation="concatenate",
-                input_files=video_paths,
-                output_file=output_path
-            )
-            
-            # Clean up concat file
-            concat_file.unlink()
-            
-            logger.info(f"Concatenation complete: {output_path}")
-            return output_path
+            try:
+                await self._run_command(
+                    cmd,
+                    timeout=300,
+                    operation="concatenate",
+                    input_files=video_paths,
+                    output_file=output_path
+                )
+                # Clean up concat file
+                concat_file.unlink()
+                logger.info(f"Concatenation complete (fast path): {output_path}")
+                return output_path
+            except FFmpegError as fast_err:
+                # Demuxer + -c copy is brittle when inputs have mismatched
+                # codec parameters. Fall back to the concat *filter* which
+                # re-encodes everything to a uniform profile.
+                logger.warning(
+                    f"Fast concat failed ({fast_err}); falling back to concat filter "
+                    "(re-encoding to 1280x720@30 libx264/aac)."
+                )
+                # Make sure the demuxer artefact is cleaned up
+                try:
+                    concat_file.unlink()
+                except Exception:
+                    pass
+                return await self._concatenate_with_filter(video_paths, output_path)
             
         except Exception as e:
             logger.error(f"Concatenation failed: {e}")
             raise FFmpegError(f"Failed to concatenate videos: {e}")
+
+    async def _concatenate_with_filter(
+        self,
+        video_paths: List[str],
+        output_path: str,
+    ) -> str:
+        """
+        Concatenate using the FFmpeg `concat` filter -- re-encodes every
+        input to a normalised h.264/aac MP4 so mismatched source codecs,
+        resolutions or framerates are handled transparently.
+        """
+        target_w, target_h, target_fps = 1280, 720, 30
+        n = len(video_paths)
+
+        # Build per-input filter chain: scale + pad to target res, then fps.
+        # The concat filter then joins n streams into one v+a output.
+        filter_parts = []
+        for i in range(n):
+            filter_parts.append(
+                f"[{i}:v]scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
+                f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,"
+                f"fps={target_fps},setsar=1[v{i}];"
+                f"[{i}:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo[a{i}];"
+            )
+        concat_inputs = "".join(f"[v{i}][a{i}]" for i in range(n))
+        filter_complex = (
+            "".join(filter_parts) + f"{concat_inputs}concat=n={n}:v=1:a=1[outv][outa]"
+        )
+
+        cmd = ["ffmpeg"]
+        for vp in video_paths:
+            cmd += ["-i", vp]
+        cmd += [
+            "-filter_complex", filter_complex,
+            "-map", "[outv]",
+            "-map", "[outa]",
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", "23",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-ar", "44100",
+            "-y",
+            output_path,
+        ]
+
+        await self._run_command(
+            cmd,
+            timeout=600,
+            operation="concatenate_filter",
+            input_files=video_paths,
+            output_file=output_path,
+        )
+        logger.info(f"Concatenation complete (filter fallback): {output_path}")
+        return output_path
     
     async def extract_audio(self, video_path: str, output_path: Optional[str] = None) -> str:
         """
