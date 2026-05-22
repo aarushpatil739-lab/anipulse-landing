@@ -1,0 +1,148 @@
+{
+  "total_tests": 11,
+  "passed": 4,
+  "failed": 7,
+  "tests": [
+    {
+      "test": "probe",
+      "passed": true,
+      "message": "1280x720 @ 30.0fps, 3.00s",
+      "metrics": {
+        "operation": "probe",
+        "trace_id": "5e5857e9",
+        "elapsed_ms": 899.9466896057129,
+        "input_files": [
+          "/app/backend/test_media/test_video_blue.mp4"
+        ],
+        "output_file": "metadata",
+        "command": "ffprobe -v error -show_entries format=duration,size,bit_rate:stream=width,height,r_frame_rate,codec_name,codec_type -of json /app/backend/test_media/test_video_blue.mp4",
+        "success": true,
+        "error": null
+      },
+      "integrity": null
+    },
+    {
+      "test": "trim",
+      "passed": false,
+      "message": "Integrity failed: ['Output file too small: 19232 bytes']",
+      "metrics": null,
+      "integrity": null
+    },
+    {
+      "test": "concatenate",
+      "passed": true,
+      "message": "Concatenated 3 clips \u2192 7.52s output",
+      "metrics": {
+        "operation": "probe",
+        "trace_id": "eed2967b",
+        "elapsed_ms": 682.4531555175781,
+        "input_files": [
+          "/app/backend/temp/concat_245bd81a70b04a82bc024e2a38491f1d.mp4"
+        ],
+        "output_file": "metadata",
+        "command": "ffprobe -v error -show_entries format=duration,size,bit_rate:stream=width,height,r_frame_rate,codec_name,codec_type -of json /app/backend/temp/concat_245bd81a70b04a82bc024e2a38491f1d.mp4",
+        "success": true,
+        "error": null
+      },
+      "integrity": {
+        "valid": true,
+        "file_exists": true,
+        "file_size_bytes": 136251,
+        "has_video_stream": true,
+        "has_audio_stream": true,
+        "duration": 7.524,
+        "codec_video": "h264",
+        "codec_audio": "aac",
+        "errors": []
+      }
+    },
+    {
+      "test": "extract_audio",
+      "passed": true,
+      "message": "Extracted audio: 72.4KB",
+      "metrics": {
+        "operation": "extract_audio",
+        "trace_id": "05381fcd",
+        "elapsed_ms": 793.632984161377,
+        "input_files": [
+          "/app/backend/test_media/test_video_blue.mp4"
+        ],
+        "output_file": "/app/backend/temp/audio_b05ae7830f2c452f99e7de31064198ef.mp3",
+        "command": "ffmpeg -i /app/backend/test_media/test_video_blue.mp4 -vn -acodec libmp3lame -ab 192k -ar 44100 -y /app/backend/temp/audio_b05ae7830f2c452f99e7de31064198ef.mp3",
+        "success": true,
+        "error": null
+      },
+      "integrity": null
+    },
+    {
+      "test": "merge_audio",
+      "passed": false,
+      "message": "Integrity failed: ['Output file too small: 50123 bytes']",
+      "metrics": null,
+      "integrity": null
+    },
+    {
+      "test": "transition_fade",
+      "passed": false,
+      "message": "Integrity failed: ['Output file too small: 48851 bytes']",
+      "metrics": null,
+      "integrity": null
+    },
+    {
+      "test": "transition_flash",
+      "passed": false,
+      "message": "Exception: Failed to apply transition: FFmpeg timeout after 180s",
+      "metrics": null,
+      "integrity": null
+    },
+    {
+      "test": "effect_zoom",
+      "passed": true,
+      "message": "Applied zoom effect \u2192 270.00s",
+      "metrics": {
+        "operation": "probe",
+        "trace_id": "e45798bd",
+        "elapsed_ms": 80.75380325317383,
+        "input_files": [
+          "/app/backend/temp/zoom_79ebf4e7088b41fd96ac572976780c62.mp4"
+        ],
+        "output_file": "metadata",
+        "command": "ffprobe -v error -show_entries format=duration,size,bit_rate:stream=width,height,r_frame_rate,codec_name,codec_type -of json /app/backend/temp/zoom_79ebf4e7088b41fd96ac572976780c62.mp4",
+        "success": true,
+        "error": null
+      },
+      "integrity": {
+        "valid": true,
+        "file_exists": true,
+        "file_size_bytes": 467841,
+        "has_video_stream": true,
+        "has_audio_stream": true,
+        "duration": 270.0,
+        "codec_video": "h264",
+        "codec_audio": "aac",
+        "errors": []
+      }
+    },
+    {
+      "test": "effect_shake",
+      "passed": false,
+      "message": "Integrity failed: ['Output file too small: 46280 bytes']",
+      "metrics": null,
+      "integrity": null
+    },
+    {
+      "test": "effect_speed_ramp",
+      "passed": false,
+      "message": "Integrity failed: ['Output file too small: 13688 bytes']",
+      "metrics": null,
+      "integrity": null
+    },
+    {
+      "test": "export_final",
+      "passed": false,
+      "message": "Integrity failed: ['Output file too small: 57771 bytes']",
+      "metrics": null,
+      "integrity": null
+    }
+  ]
+}

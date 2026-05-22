@@ -54,9 +54,6 @@ class StatusCheckCreate(BaseModel):
     client_name: str
 
 # Add your routes to the router instead of directly to app
-@api_router.get("/")
-async def root():
-    return {"message": "Hello World"}
 
 @api_router.post("/status", response_model=StatusCheck)
 async def create_status_check(input: StatusCheckCreate):
@@ -205,6 +202,280 @@ async def process_session(session_id: str):
     except Exception as e:
         logging.error(f"Error processing session: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+# ========== FFMPEG TEST ENDPOINTS ==========
+
+from services.ffmpeg_utils import FFmpegUtils, FFmpegError
+from fastapi import BackgroundTasks
+from typing import Optional, Dict, Any
+import tempfile
+import shutil
+import subprocess
+
+# Initialize FFmpeg utilities
+ffmpeg_utils = FFmpegUtils()
+
+class FFmpegTestRequest(BaseModel):
+    """Base model for FFmpeg test requests"""
+    session_id: Optional[str] = None
+    
+class TrimRequest(FFmpegTestRequest):
+    """Request model for trim test"""
+    video_index: int = 0  # Which video from the session to use
+    start: float = Field(..., description="Start time in seconds")
+    end: float = Field(..., description="End time in seconds")
+
+class ConcatenateRequest(FFmpegTestRequest):
+    """Request model for concatenate test"""
+    video_indices: List[int] = Field(..., description="Indices of videos to concatenate")
+
+class TransitionRequest(FFmpegTestRequest):
+    """Request model for transition test"""
+    video1_index: int = 0
+    video2_index: int = 1
+    transition_type: str = Field("fade", description="fade, flash, or zoom")
+    duration: float = Field(0.5, description="Transition duration in seconds")
+
+async def generate_test_video(name: str = "test", duration: float = 3.0, 
+                              color: str = "blue") -> str:
+    """Generate a synthetic test video for testing"""
+    output_path = f"/app/backend/temp/{name}_{uuid.uuid4().hex}.mp4"
+    
+    cmd = [
+        'ffmpeg',
+        '-f', 'lavfi',
+        '-i', f'color=c={color}:s=1280x720:d={duration}:r=30',
+        '-f', 'lavfi',
+        '-i', f'sine=frequency=440:duration={duration}',
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-crf', '23',
+        '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac',
+        '-b:a', '128k',
+        '-y',
+        output_path
+    ]
+    
+    process = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    
+    await process.communicate()
+    
+    if process.returncode != 0:
+        raise HTTPException(status_code=500, detail="Failed to generate test video")
+    
+    return output_path
+
+@api_router.post("/test/ffmpeg/probe")
+async def test_probe(request: FFmpegTestRequest):
+    """Test FFmpeg probe functionality"""
+    try:
+        # Generate a test video
+        test_video = await generate_test_video("probe_test", duration=2.0, color="blue")
+        
+        # Probe it
+        metadata = await ffmpeg_utils.probe(test_video)
+        
+        # Validate output
+        integrity = await ffmpeg_utils.validate_output(test_video, require_video=True)
+        
+        # Get metrics
+        metrics = ffmpeg_utils.get_last_metric()
+        
+        # Cleanup
+        Path(test_video).unlink(missing_ok=True)
+        
+        return {
+            "success": True,
+            "operation": "probe",
+            "metadata": metadata,
+            "integrity": {
+                "valid": integrity.valid,
+                "has_video": integrity.has_video_stream,
+                "has_audio": integrity.has_audio_stream,
+                "duration": integrity.duration,
+                "file_size_bytes": integrity.file_size_bytes
+            },
+            "metrics": metrics
+        }
+        
+    except Exception as e:
+        logger.error(f"Probe test failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/test/ffmpeg/trim")
+async def test_trim(request: TrimRequest):
+    """Test FFmpeg trim functionality"""
+    try:
+        # Generate a test video
+        test_video = await generate_test_video("trim_test", duration=5.0, color="green")
+        
+        # Trim it
+        output = await ffmpeg_utils.trim(test_video, request.start, request.end)
+        
+        # Validate output
+        integrity = await ffmpeg_utils.validate_output(output, require_video=True, min_duration=0.5)
+        
+        # Get metrics
+        metrics = ffmpeg_utils.get_last_metric()
+        
+        # Cleanup
+        Path(test_video).unlink(missing_ok=True)
+        Path(output).unlink(missing_ok=True)
+        
+        return {
+            "success": True,
+            "operation": "trim",
+            "input_duration": 5.0,
+            "trim_start": request.start,
+            "trim_end": request.end,
+            "expected_duration": request.end - request.start,
+            "actual_duration": integrity.duration,
+            "integrity": {
+                "valid": integrity.valid,
+                "errors": integrity.errors
+            },
+            "metrics": metrics
+        }
+        
+    except Exception as e:
+        logger.error(f"Trim test failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/test/ffmpeg/concatenate")
+async def test_concatenate():
+    """Test FFmpeg concatenate functionality"""
+    try:
+        # Generate multiple test videos
+        video1 = await generate_test_video("concat1", duration=2.0, color="red")
+        video2 = await generate_test_video("concat2", duration=2.5, color="blue")
+        video3 = await generate_test_video("concat3", duration=1.5, color="green")
+        
+        videos = [video1, video2, video3]
+        expected_duration = 2.0 + 2.5 + 1.5
+        
+        # Concatenate them
+        output = await ffmpeg_utils.concatenate(videos)
+        
+        # Validate output
+        integrity = await ffmpeg_utils.validate_output(output, require_video=True, min_duration=5.0)
+        
+        # Get metrics
+        metrics = ffmpeg_utils.get_last_metric()
+        
+        # Cleanup
+        for v in videos:
+            Path(v).unlink(missing_ok=True)
+        Path(output).unlink(missing_ok=True)
+        
+        return {
+            "success": True,
+            "operation": "concatenate",
+            "input_count": len(videos),
+            "expected_duration": expected_duration,
+            "actual_duration": integrity.duration,
+            "integrity": {
+                "valid": integrity.valid,
+                "errors": integrity.errors
+            },
+            "metrics": metrics
+        }
+        
+    except Exception as e:
+        logger.error(f"Concatenate test failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/test/ffmpeg/transition")
+async def test_transition(request: TransitionRequest):
+    """Test FFmpeg transition functionality"""
+    try:
+        # Generate two test videos
+        video1 = await generate_test_video("trans1", duration=3.0, color="purple")
+        video2 = await generate_test_video("trans2", duration=3.0, color="orange")
+        
+        # Apply transition
+        output = await ffmpeg_utils.apply_transition(
+            video1,
+            video2,
+            request.transition_type,
+            request.duration
+        )
+        
+        # Validate output
+        integrity = await ffmpeg_utils.validate_output(output, require_video=True, min_duration=4.0)
+        
+        # Get metrics
+        metrics = ffmpeg_utils.get_last_metric()
+        
+        # Cleanup
+        Path(video1).unlink(missing_ok=True)
+        Path(video2).unlink(missing_ok=True)
+        Path(output).unlink(missing_ok=True)
+        
+        return {
+            "success": True,
+            "operation": f"transition_{request.transition_type}",
+            "transition_type": request.transition_type,
+            "transition_duration": request.duration,
+            "output_duration": integrity.duration,
+            "integrity": {
+                "valid": integrity.valid,
+                "errors": integrity.errors
+            },
+            "metrics": metrics
+        }
+        
+    except Exception as e:
+        logger.error(f"Transition test failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/test/ffmpeg/metrics")
+async def get_ffmpeg_metrics():
+    """Get all recorded FFmpeg performance metrics"""
+    try:
+        metrics = ffmpeg_utils.get_metrics()
+        
+        # Calculate summary statistics
+        if metrics:
+            total_ops = len(metrics)
+            successful = sum(1 for m in metrics if m['success'])
+            failed = total_ops - successful
+            avg_time = sum(m['elapsed_ms'] for m in metrics) / total_ops if total_ops > 0 else 0
+            
+            summary = {
+                "total_operations": total_ops,
+                "successful": successful,
+                "failed": failed,
+                "success_rate": (successful / total_ops * 100) if total_ops > 0 else 0,
+                "avg_elapsed_ms": avg_time
+            }
+        else:
+            summary = {
+                "total_operations": 0,
+                "successful": 0,
+                "failed": 0,
+                "success_rate": 0,
+                "avg_elapsed_ms": 0
+            }
+        
+        return {
+            "success": True,
+            "summary": summary,
+            "metrics": metrics
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get metrics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+import asyncio
+
 
 @api_router.get("/status", response_model=List[StatusCheck])
 async def get_status_checks():
