@@ -257,7 +257,10 @@ class RenderService:
             # Single segment, no transitions needed
             return processed_segments[0]
         
-        # Apply transitions between consecutive segments
+        # SAFETY: Validate segment durations before attempting transitions
+        MIN_DURATION_FOR_TRANSITION = 0.4  # 400ms minimum to safely apply transitions
+        
+        # Apply transitions between consecutive segments with safety checks
         transitioned_segments = []
         
         for i in range(len(processed_segments)):
@@ -265,26 +268,55 @@ class RenderService:
                 # First segment: no transition, just add it
                 transitioned_segments.append(processed_segments[i])
             else:
-                # Apply transition between previous and current segment
+                # Check if both segments are long enough for transition
                 prev_seg = processed_segments[i - 1]
                 curr_seg = processed_segments[i]
                 transition_type = timeline_segments[i].transition
                 
-                if transition_type and transition_type != "none":
-                    # Apply transition
-                    logger.debug(f"Applying {transition_type} transition between segment {i-1} and {i}")
-                    transitioned = await self._apply_transition(
-                        prev_seg,
-                        curr_seg,
-                        transition_type,
-                        i
-                    )
-                    self.intermediate_files.append(transitioned)
+                # SAFETY: Validate segment durations
+                try:
+                    prev_meta = await self.ffmpeg.probe(prev_seg)
+                    curr_meta = await self.ffmpeg.probe(curr_seg)
                     
-                    # Replace the last segment in list with transitioned version
-                    if transitioned_segments:
-                        transitioned_segments.pop()
-                    transitioned_segments.append(transitioned)
+                    prev_duration = prev_meta['duration']
+                    curr_duration = curr_meta['duration']
+                    
+                    can_apply_transition = (
+                        prev_duration >= MIN_DURATION_FOR_TRANSITION and
+                        curr_duration >= MIN_DURATION_FOR_TRANSITION
+                    )
+                    
+                    if not can_apply_transition:
+                        logger.warning(
+                            f"Segments too short for transition (prev={prev_duration:.2f}s, curr={curr_duration:.2f}s), "
+                            f"skipping transition and using direct concat"
+                        )
+                        transition_type = None
+                    
+                except Exception as e:
+                    logger.warning(f"Failed to probe segment durations: {e}, skipping transition")
+                    transition_type = None
+                
+                if transition_type and transition_type != "none":
+                    # Attempt to apply transition with fallback
+                    try:
+                        logger.debug(f"Applying {transition_type} transition between segment {i-1} and {i}")
+                        transitioned = await self._apply_transition_safe(
+                            prev_seg,
+                            curr_seg,
+                            transition_type,
+                            i
+                        )
+                        self.intermediate_files.append(transitioned)
+                        
+                        # Replace the last segment in list with transitioned version
+                        if transitioned_segments:
+                            transitioned_segments.pop()
+                        transitioned_segments.append(transitioned)
+                    except Exception as e:
+                        logger.error(f"Transition failed: {e}, falling back to direct concatenation")
+                        # Fallback: just add current segment without transition
+                        transitioned_segments.append(curr_seg)
                 else:
                     # No transition, just add current segment
                     transitioned_segments.append(curr_seg)
@@ -302,14 +334,21 @@ class RenderService:
         logger.info(f"Merge complete: {merged}")
         return merged
     
-    async def _apply_transition(
+    async def _apply_transition_safe(
         self,
         clip1_path: str,
         clip2_path: str,
         transition_type: str,
         index: int
     ) -> str:
-        """Apply transition between two clips"""
+        """
+        Apply transition between two clips with error recovery
+        
+        Fallback order:
+        1. Try requested transition type
+        2. If fails, try simple fade
+        3. If still fails, return concatenated clips without transition
+        """
         output_path = str(self.work_dir / f"trans_{index:04d}_{transition_type}.mp4")
         
         # Map transition types
@@ -318,13 +357,39 @@ class RenderService:
             logger.warning(f"Unknown transition type: {transition_type}, using fade")
             transition_type = "fade"
         
-        return await self.ffmpeg.apply_transition(
-            clip1_path,
-            clip2_path,
-            transition_type,
-            duration=0.5,
-            output_path=output_path
-        )
+        # Try primary transition
+        try:
+            return await self.ffmpeg.apply_transition(
+                clip1_path,
+                clip2_path,
+                transition_type,
+                duration=0.5,
+                output_path=output_path
+            )
+        except Exception as e:
+            logger.warning(f"Primary transition '{transition_type}' failed: {e}")
+            
+            # Fallback 1: Try simple fade if not already using it
+            if transition_type != "fade":
+                try:
+                    logger.info("Attempting fallback to fade transition...")
+                    return await self.ffmpeg.apply_transition(
+                        clip1_path,
+                        clip2_path,
+                        "fade",
+                        duration=0.3,  # Shorter duration for stability
+                        output_path=output_path
+                    )
+                except Exception as e2:
+                    logger.warning(f"Fade fallback also failed: {e2}")
+            
+            # Fallback 2: Simple concatenation without transition
+            logger.info("All transitions failed, using direct concatenation")
+            concat_path = str(self.work_dir / f"concat_{index:04d}.mp4")
+            return await self.ffmpeg.concatenate(
+                [clip1_path, clip2_path],
+                concat_path
+            )
     
     async def _merge_audio(
         self,

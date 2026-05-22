@@ -91,6 +91,9 @@ class TimelineGenerator:
         """
         logger.info("Starting timeline generation...")
         
+        # Minimum segment duration to prevent FFmpeg issues
+        MIN_SEGMENT_DURATION = 0.5  # 500ms minimum for stable rendering
+        
         beats = self.audio_analysis['beats']
         drops = self.audio_analysis['drops']
         energy_sections = self.audio_analysis['sections']
@@ -122,10 +125,17 @@ class TimelineGenerator:
                 position_in_audio=beat_time
             )
             
+            # STABILITY: Enforce minimum segment duration
+            if cut_duration < MIN_SEGMENT_DURATION:
+                logger.debug(f"Cut duration {cut_duration:.2f}s too short, enforcing minimum {MIN_SEGMENT_DURATION}s")
+                cut_duration = MIN_SEGMENT_DURATION
+            
             # Ensure we don't exceed max duration
             if self.current_timeline_pos + cut_duration > self.max_duration:
                 cut_duration = self.max_duration - self.current_timeline_pos
-                if cut_duration < 0.3:  # Too short, stop
+                # Skip if remaining duration is too short for stable rendering
+                if cut_duration < MIN_SEGMENT_DURATION:
+                    logger.info(f"Remaining duration {cut_duration:.2f}s too short, stopping timeline generation")
                     break
             
             # Select clip
@@ -143,6 +153,21 @@ class TimelineGenerator:
                 continue
             
             clip_index, source_start, source_end = clip_selection
+            
+            # STABILITY: Validate segment duration from clip selection
+            actual_duration = source_end - source_start
+            if actual_duration < MIN_SEGMENT_DURATION:
+                logger.warning(f"Selected clip segment too short ({actual_duration:.2f}s), adjusting...")
+                # Try to extend the segment if possible
+                clip = self.clip_selector.clips[clip_index]
+                if source_end + (MIN_SEGMENT_DURATION - actual_duration) <= clip.duration:
+                    source_end = source_start + MIN_SEGMENT_DURATION
+                    actual_duration = MIN_SEGMENT_DURATION
+                else:
+                    # Can't extend, skip this segment
+                    logger.warning(f"Cannot extend segment, skipping")
+                    beat_idx += 1
+                    continue
             
             # Select transition and effect
             transition = self.pacing.select_transition(
@@ -164,7 +189,7 @@ class TimelineGenerator:
                 start_time=source_start,
                 end_time=source_end,
                 timeline_start=self.current_timeline_pos,
-                timeline_end=self.current_timeline_pos + cut_duration,
+                timeline_end=self.current_timeline_pos + actual_duration,
                 transition=transition.value if transition != TransitionType.NONE else None,
                 effect=effect.value if effect != EffectType.NONE else None,
                 energy_level=energy_level.value,
@@ -190,7 +215,7 @@ class TimelineGenerator:
                 effect_count += 1
             
             # Advance timeline
-            self.current_timeline_pos += cut_duration
+            self.current_timeline_pos += actual_duration
             
             # Advance to next beat (or skip beats if cut was long)
             while beat_idx < len(beats) and beats[beat_idx] < self.current_timeline_pos:

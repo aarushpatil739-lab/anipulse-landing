@@ -1,18 +1,6 @@
 [
   {
-    "content": "Add generation API endpoints (generate, status, timeline, download)",
+    "content": "Frontend: Polish error messages and success feedback",
     "status": "completed"
-  },
-  {
-    "content": "Update frontend Upload page with Generate AMV button and progress UI",
-    "status": "pending"
-  },
-  {
-    "content": "Create end-to-end generation pipeline test",
-    "status": "in_progress"
-  },
-  {
-    "content": "Test full MVP: upload → generate → download workflow",
-    "status": "pending"
   }
 ]

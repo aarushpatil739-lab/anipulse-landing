@@ -66,6 +66,12 @@ class AudioAnalyzer:
         # Detect tempo
         tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr, units='frames')
         
+        # Convert tempo to scalar (librosa 0.10+ returns array)
+        if isinstance(tempo, np.ndarray):
+            tempo = float(tempo[0] if len(tempo) > 0 else 120.0)
+        else:
+            tempo = float(tempo)
+        
         # Convert frames to timestamps
         beat_times = librosa.frames_to_time(beat_frames, sr=sr)
         

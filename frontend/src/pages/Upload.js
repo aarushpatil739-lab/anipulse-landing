@@ -17,6 +17,14 @@ const Upload = () => {
   const [errors, setErrors] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [totalSize, setTotalSize] = useState(0);
+  
+  // Generation state
+  const [jobId, setJobId] = useState(null);
+  const [generationStatus, setGenerationStatus] = useState(null); // 'queued', 'analyzing_audio', 'generating_timeline', 'rendering', 'completed', 'failed'
+  const [generationProgress, setGenerationProgress] = useState(0);
+  const [generationStage, setGenerationStage] = useState('');
+  const [generationError, setGenerationError] = useState(null);
+  const [downloadUrl, setDownloadUrl] = useState(null);
 
   // Create upload session on mount
   useEffect(() => {
@@ -175,22 +183,75 @@ const Upload = () => {
     setAudio(null);
   };
 
-  // Process uploads
+  // Process uploads - Start AMV generation
   const handleProcess = async () => {
     setIsProcessing(true);
+    setGenerationError(null);
+    
     try {
-      const response = await uploadAPI.processSession(sessionId);
-      if (response.success) {
-        // Show success message (placeholder for now)
-        alert(response.message || 'Processing started! AI editing coming soon.');
+      // Start generation
+      const response = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/generate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          session_id: sessionId,
+          style: 'amv_default',
+          max_duration: 180.0
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (data.success && data.job_id) {
+        setJobId(data.job_id);
+        setGenerationStatus('queued');
+        // Start polling for status
+        pollGenerationStatus(data.job_id);
       } else {
-        setErrors(prev => [...prev, response.error || 'Failed to start processing']);
+        throw new Error(data.detail || 'Failed to start generation');
       }
     } catch (error) {
-      setErrors(prev => [...prev, 'Failed to start processing']);
-    } finally {
+      console.error('Generation error:', error);
+      setErrors(prev => [...prev, `Failed to start generation: ${error.message}`]);
       setIsProcessing(false);
+      setGenerationError(error.message);
     }
+  };
+  
+  // Poll generation status
+  const pollGenerationStatus = async (jobId) => {
+    const pollInterval = setInterval(async () => {
+      try {
+        const response = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/generate/${jobId}/status`);
+        const data = await response.json();
+        
+        if (data.success) {
+          setGenerationStatus(data.status);
+          setGenerationProgress(data.progress_pct);
+          setGenerationStage(data.current_stage);
+          
+          // Stop polling if completed or failed
+          if (data.status === 'completed') {
+            clearInterval(pollInterval);
+            setIsProcessing(false);
+            setDownloadUrl(`${process.env.REACT_APP_BACKEND_URL}/api/generate/${jobId}/download`);
+          } else if (data.status === 'failed') {
+            clearInterval(pollInterval);
+            setIsProcessing(false);
+            setGenerationError(data.error_message || 'Generation failed');
+            setErrors(prev => [...prev, `Generation failed: ${data.error_message || 'Unknown error'}`]);
+          }
+        }
+      } catch (error) {
+        console.error('Status poll error:', error);
+        // Don't clear interval on network errors, keep trying
+      }
+    }, 2000); // Poll every 2 seconds
+    
+    // Cleanup on unmount
+    return () => clearInterval(pollInterval);
   };
 
   // Clear error after 5 seconds
@@ -355,6 +416,134 @@ const Upload = () => {
           </div>
         </motion.div>
 
+        {/* Generation Progress UI */}
+        {isProcessing && jobId && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="glass-effect rounded-2xl p-8 border border-purple-500/30 mb-8 bg-gradient-to-br from-purple-500/5 to-blue-500/5"
+          >
+            <div className="text-center mb-6">
+              <h3 className="text-2xl font-bold text-white mb-2">
+                {generationStatus === 'completed' ? 'Generation Complete!' : 'Generating Your AMV...'}
+              </h3>
+              <p className="text-gray-300 text-sm">
+                {generationStage || 'Initializing...'}
+              </p>
+            </div>
+            
+            {/* Progress bar */}
+            <div className="relative w-full h-3 bg-gray-800 rounded-full overflow-hidden mb-4">
+              <motion.div
+                initial={{ width: 0 }}
+                animate={{ width: `${generationProgress}%` }}
+                transition={{ duration: 0.5, ease: 'easeOut' }}
+                className="h-full bg-gradient-to-r from-purple-500 via-pink-500 to-blue-500"
+                style={{
+                  boxShadow: '0 0 20px rgba(168, 85, 247, 0.5)'
+                }}
+              />
+            </div>
+            
+            {/* Progress percentage */}
+            <p className="text-center text-white font-mono text-lg mb-4">
+              {Math.round(generationProgress)}%
+            </p>
+            
+            {/* Stage indicators */}
+            <div className="grid grid-cols-4 gap-2 text-xs">
+              {[
+                { key: 'analyzing_audio', label: 'Analyzing' },
+                { key: 'generating_timeline', label: 'Timeline' },
+                { key: 'rendering', label: 'Rendering' },
+                { key: 'completed', label: 'Complete' }
+              ].map((stage, idx) => {
+                const isActive = generationStatus === stage.key;
+                const isComplete = ['analyzing_audio', 'generating_timeline', 'rendering', 'completed'].indexOf(generationStatus) > idx;
+                
+                return (
+                  <div
+                    key={stage.key}
+                    className={`p-2 rounded text-center transition-all ${
+                      isActive 
+                        ? 'bg-purple-500/30 text-white border border-purple-500' 
+                        : isComplete
+                        ? 'bg-green-500/20 text-green-400 border border-green-500/50'
+                        : 'bg-gray-800/50 text-gray-500 border border-gray-700'
+                    }`}
+                  >
+                    {stage.label}
+                  </div>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
+
+        {/* Success State with Download */}
+        {generationStatus === 'completed' && downloadUrl && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="glass-effect rounded-2xl p-8 border border-green-500/50 mb-8 bg-gradient-to-br from-green-500/10 to-blue-500/10 text-center"
+          >
+            <motion.div
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              transition={{ delay: 0.2, type: "spring", stiffness: 200 }}
+            >
+              <CheckCircle className="w-20 h-20 text-green-400 mx-auto mb-4" />
+            </motion.div>
+            <h3 className="text-3xl font-bold text-white mb-2">Your AMV is Ready!</h3>
+            <p className="text-gray-300 mb-2">AI-generated beat-synced anime music video</p>
+            <p className="text-sm text-gray-400 mb-6">
+              Analyzing music • Syncing beats • Applying effects • Rendering complete
+            </p>
+            
+            <Button
+              variant="primary"
+              size="lg"
+              onClick={() => {
+                window.location.href = downloadUrl;
+              }}
+              className="text-xl px-12 py-4 mb-4"
+            >
+              <span className="mr-2">⬇️</span>
+              Download AMV
+            </Button>
+            
+            <p className="text-xs text-gray-500">
+              H.264 video • 1080p • Beat-synced
+            </p>
+          </motion.div>
+        )}
+
+        {/* Error State */}
+        {generationStatus === 'failed' && generationError && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="glass-effect rounded-2xl p-6 border border-red-500/50 mb-8 bg-red-500/10 text-center"
+          >
+            <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-3" />
+            <h3 className="text-xl font-bold text-white mb-2">Generation Failed</h3>
+            <p className="text-red-300 text-sm mb-4">{generationError}</p>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setGenerationStatus(null);
+                setGenerationError(null);
+                setJobId(null);
+                setIsProcessing(false);
+              }}
+              className="text-sm"
+            >
+              Try Again
+            </Button>
+          </motion.div>
+        )}
+
         {/* Process button */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -369,11 +558,14 @@ const Upload = () => {
             className="text-xl px-16 py-6"
           >
             {isProcessing ? (
-              'Processing...'
+              <>
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-white mr-2"></div>
+                Generating AMV...
+              </>
             ) : (
               <>
                 <Sparkles className="w-6 h-6 mr-2" />
-                Process Now
+                Generate AMV
               </>
             )}
           </Button>
