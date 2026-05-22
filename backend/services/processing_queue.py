@@ -14,6 +14,7 @@ Features:
 
 import asyncio
 import logging
+import os
 from typing import Optional
 from pathlib import Path
 import time
@@ -278,13 +279,21 @@ class ProcessingQueue:
         # Initialize render service
         render_service = RenderService(job.job_id)
         
-        # Render video
+        # Render video.
+        # NOTE on resolution: we use 720p by default because the Railway
+        # trial plan caps the container at ~512MB RAM.  A 1080p libx264
+        # encode of a ~3-minute AMV peaks above that budget and the kernel
+        # SIGKILLs ffmpeg (rc=-9).  720p output is still high quality and
+        # downloads faster.  Override via env if you upgrade the plan:
+        target_resolution = os.environ.get("ANIPULSE_OUTPUT_RES", "720p")
+        target_quality = os.environ.get("ANIPULSE_OUTPUT_QUALITY", "fast")
+
         export = await render_service.render(
             timeline=job.timeline,
             audio_path=job.input_audio['path'],
-            resolution="1080p",
+            resolution=target_resolution,
             fps=30,
-            quality="balanced"
+            quality=target_quality,
         )
         
         # Store export info in job

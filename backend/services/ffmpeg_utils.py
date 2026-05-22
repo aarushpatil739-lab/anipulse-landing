@@ -386,8 +386,10 @@ class FFmpegUtils:
             "-map", "[outv]",
             "-map", "[outa]",
             "-c:v", "libx264",
-            "-preset", "fast",
-            "-crf", "23",
+            "-preset", "ultrafast",
+            "-crf", "26",
+            "-x264opts", "rc-lookahead=10:ref=2",
+            "-threads", "2",
             "-c:a", "aac",
             "-b:a", "128k",
             "-ar", "44100",
@@ -776,11 +778,12 @@ class FFmpegUtils:
             }
             scale = res_map.get(resolution, "1920:1080")
             
-            # Quality preset mapping
+            # Quality preset mapping. `ultrafast` keeps RAM usage low which
+            # matters on small containers (Railway trial = 512MB).
             quality_map = {
                 "high": {"preset": "slow", "crf": 20},
                 "balanced": {"preset": "medium", "crf": 23},
-                "fast": {"preset": "fast", "crf": 25}
+                "fast": {"preset": "ultrafast", "crf": 26}
             }
             settings = quality_map.get(quality, quality_map["balanced"])
             
@@ -791,8 +794,12 @@ class FFmpegUtils:
                 '-c:v', 'libx264',
                 '-preset', settings['preset'],
                 '-crf', str(settings['crf']),
+                # Cap libx264 memory pressure: small lookahead + 2 threads
+                # avoids the OOM SIGKILL we hit on the Railway trial plan.
+                '-x264opts', 'rc-lookahead=10:ref=2',
+                '-threads', '2',
                 '-c:a', 'aac',
-                '-b:a', '192k',
+                '-b:a', '128k',
                 '-ar', '44100',
                 '-movflags', '+faststart',  # Web optimization
                 '-y',
