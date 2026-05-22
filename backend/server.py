@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
+import sys
 import json
 import logging
 from pathlib import Path
@@ -774,48 +775,71 @@ logger = logging.getLogger(__name__)
 # Health check endpoint
 @app.get("/health")
 async def health_check():
-    """Health check endpoint for Railway"""
+    """
+    Lightweight health check endpoint used by Railway.
+
+    Returns HTTP 200 as soon as the FastAPI process is up, even if the
+    background queue or MongoDB ping is still warming up. This prevents
+    healthcheck timeouts on cold start when librosa/scipy/numba imports
+    eat 30-60s of CPU time.
+    """
+    # MongoDB ping is best-effort and bounded so a slow/down Mongo never
+    # turns the healthcheck red.
+    db_state = "unknown"
     try:
-        # Test MongoDB connection
-        await db.command("ping")
-        return {
-            "status": "healthy",
-            "database": "connected",
-            "service": "anipulse-backend"
-        }
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return {
-            "status": "unhealthy",
-            "database": "disconnected",
-            "error": str(e)
-        }
+        await asyncio.wait_for(db.command("ping"), timeout=2.0)
+        db_state = "connected"
+    except asyncio.TimeoutError:
+        db_state = "timeout"
+    except Exception as exc:  # noqa: BLE001
+        db_state = f"error: {exc}"
+
+    return {
+        "status": "healthy",
+        "service": "anipulse-backend",
+        "version": "1.0.0",
+        "database": db_state,
+        "ffmpeg_available": ffmpeg_is_available(),
+        "ffmpeg_missing": ffmpeg_status_dict()["missing"],
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
 
 @app.on_event("startup")
 async def startup_event():
     """Startup event handler"""
     global processing_queue
     
-    logger.info("Starting AniPulse Backend API")
-    logger.info(f"MongoDB: {MONGO_URL}")
-    logger.info(f"Database: {DB_NAME}")
-    logger.info(f"CORS Origins: {CORS_ORIGINS}")
-    logger.info(f"Port: {PORT}")
-    
-    # Test MongoDB connection
+    logger.info("=" * 60)
+    logger.info("AniPulse Backend API - starting up")
+    logger.info("=" * 60)
+    logger.info(f"Python:      {sys.version.split()[0]}")
+    logger.info(f"Working dir: {os.getcwd()}")
+    logger.info(f"MongoDB URL: {MONGO_URL}")
+    logger.info(f"Database:    {DB_NAME}")
+    logger.info(f"CORS origins:{CORS_ORIGINS}")
+    logger.info(f"PORT env:    {os.environ.get('PORT', '(not set)')}, bind PORT={PORT}")
+    logger.info(f"FFmpeg available: {ffmpeg_is_available()} | status={ffmpeg_status_dict()['missing']}")
+
+    # Test MongoDB connection (best-effort, bounded so it never blocks startup)
     try:
-        await db.command("ping")
-        logger.info("MongoDB connection successful")
+        await asyncio.wait_for(db.command("ping"), timeout=5.0)
+        logger.info("MongoDB connection: OK")
+    except asyncio.TimeoutError:
+        logger.error("MongoDB ping timed out after 5s - continuing startup anyway")
     except Exception as e:
-        logger.error(f"MongoDB connection failed: {e}")
-    
-    # Initialize and start processing queue
+        logger.error(f"MongoDB connection failed: {e} - continuing startup anyway")
+
+    # Initialize and start processing queue (best-effort)
     try:
         processing_queue = ProcessingQueue(db)
         await processing_queue.start()
-        logger.info("Processing queue started successfully")
+        logger.info("Processing queue: started")
     except Exception as e:
         logger.error(f"Failed to start processing queue: {e}")
+
+    logger.info("=" * 60)
+    logger.info("AniPulse Backend API - startup complete; ready to serve")
+    logger.info("=" * 60)
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

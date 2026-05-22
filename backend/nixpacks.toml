@@ -45,4 +45,4 @@ cmds = [
 # printed to the Railway logs on every cold start.  Always exits 0
 # so the container does not crash-loop on a missing binary; the API
 # itself surfaces /api/health/ffmpeg with HTTP 200 + available=false.
-cmd = "python verify_deps.py || true; exec uvicorn server:app --host 0.0.0.0 --port $PORT --workers 1 --log-level info"
+cmd = "python verify_deps.py || true; exec uvicorn server:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --log-level info --timeout-keep-alive 65"
