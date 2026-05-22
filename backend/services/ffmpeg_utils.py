@@ -539,7 +539,19 @@ class FFmpegUtils:
             clip_duration = duration or meta['duration']
             fps = meta['fps'] or 30
             frames = int(clip_duration * fps)
-            
+
+            # zoompan is brittle on very short clips: a fractional/zero
+            # 'd' or width/height triggers FFmpeg rc=1.  In that case,
+            # skip the effect and return the input unchanged so the caller
+            # can still use the segment.
+            if frames < 6 or meta['width'] <= 0 or meta['height'] <= 0:
+                logger.warning(
+                    f"Zoom skipped: clip too short or no dims "
+                    f"(frames={frames}, {meta['width']}x{meta['height']}). "
+                    "Returning input unchanged."
+                )
+                return input_path
+
             # Zoom in effect
             filter_str = f"zoompan=z='min(1+({zoom_factor}-1)*on/{frames},{zoom_factor})':d={frames}:s={meta['width']}x{meta['height']}:fps={fps}"
             

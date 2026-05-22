@@ -171,11 +171,21 @@ class RenderService:
             trimmed = await self._trim_segment(segment, i)
             self.intermediate_files.append(trimmed)
             
-            # Step 2: Apply effect if specified
+            # Step 2: Apply effect if specified.  If the effect fails (e.g.
+            # zoompan rejecting a tiny clip, or shake on a 0.3s segment),
+            # fall back to the trimmed clip without the effect rather than
+            # aborting the whole render -- the AMV will still be produced.
             if segment.effect and segment.effect != "none":
-                effected = await self._apply_effect(trimmed, segment.effect, i)
-                self.intermediate_files.append(effected)
-                processed.append(effected)
+                try:
+                    effected = await self._apply_effect(trimmed, segment.effect, i)
+                    self.intermediate_files.append(effected)
+                    processed.append(effected)
+                except Exception as effect_exc:
+                    logger.warning(
+                        f"Segment {i}: effect '{segment.effect}' failed -- "
+                        f"falling back to trimmed clip. Error: {effect_exc}"
+                    )
+                    processed.append(trimmed)
             else:
                 processed.append(trimmed)
         
