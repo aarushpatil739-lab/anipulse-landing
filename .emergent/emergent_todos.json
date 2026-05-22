@@ -1,14 +1,22 @@
 [
   {
-    "content": "Add FFmpeg test API endpoints to server.py (trim, concatenate, transition)",
+    "content": "Build AI Timeline Generator service integrating pacing and clip selection",
     "status": "completed"
   },
   {
-    "content": "Test FFmpeg utilities via curl/direct testing and validate outputs",
-    "status": "completed"
+    "content": "Build Render Service that executes timeline using FFmpegUtils",
+    "status": "in_progress"
   },
   {
-    "content": "Verify output file integrity, cleanup, and performance metrics collection",
-    "status": "completed"
+    "content": "Build async processing queue + background worker system",
+    "status": "pending"
+  },
+  {
+    "content": "Add generation API endpoints (generate, status, timeline, download)",
+    "status": "pending"
+  },
+  {
+    "content": "Test full generation pipeline end-to-end with uploaded clips",
+    "status": "pending"
   }
 ]

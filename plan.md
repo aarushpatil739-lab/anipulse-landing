@@ -4,26 +4,28 @@
 - Deliver the **AniPulse** product experience in phases:
   - ✅ **Marketing landing page** (dark anime cyberpunk aesthetic; neon glow + glassmorphism)
   - ✅ **Upload workflow**: creators upload **1–20 video clips** + **1 audio track**, see **progress**, **previews**, can remove files, and proceed to processing.
-  - ⏭️ **Phase 4 (current focus): AI-powered AMV Generator MVP**
-    - ✅ Analyze uploaded music (BPM/beats/drops/energy) via `librosa`
-    - 🔄 Build a **stable, modular FFmpeg utilities layer** (core rendering foundation)
-    - ⏭️ Generate an edit timeline (beats→cuts, drops→transitions)
-    - ⏭️ Render a beat-synced AMV with FFmpeg
-    - ⏭️ Provide async processing with persisted status + progress
-- Maintain a **clean, scalable architecture** with reusable UI components and backend services structured for future:
+  - 🔄 **Phase 4 (current focus): AI-powered AMV Generator MVP**
+    - ✅ Analyze uploaded music (BPM/beats/drops/energy) via `librosa` (`audio_analyzer.py`)
+    - ✅ Build and verify a **stable, modular FFmpeg utilities layer** (core rendering foundation)
+    - 🔄 Build **AI Timeline Generator** (beats→cuts, drops→transitions, energy→pacing/effects)
+    - 🔄 Build **async processing queue system** (queued → analyzing_audio → generating_timeline → rendering → completed/failed)
+    - 🔄 Render a beat-synced AMV using the verified FFmpeg foundation
+    - 🔄 Persist processing state + progress in MongoDB
+- Maintain a **clean, scalable architecture** with reusable frontend components and backend services structured for future:
   - Cloud storage (S3 / Cloudflare R2)
   - GPU acceleration
   - AI scene detection, subtitles, multi-style editing modes
   - Queue scaling / distributed workers
-- Enforce engineering requirements for Phase 4 foundation:
-  - Stability-first development
-  - Modular, reusable utilities
-  - Thorough automated/integration testing before timeline generation
-  - Detailed FFmpeg logging + actionable error reporting
-  - Output integrity validation after every operation
-  - Cleanup of intermediate artifacts
-  - Performance/timing metrics for all rendering operations
-  - Compatibility with async FastAPI architecture (no API blocking)
+
+### Engineering priorities (Phase 4)
+- Stability-first development
+- Modular and reusable services (timeline generation independent of FFmpeg)
+- Thorough automated/integration testing before expanding effects
+- Detailed logging + actionable error reporting
+- Output integrity validation after every operation
+- Cleanup of intermediate artifacts
+- Performance/timing metrics for rendering operations
+- Async FastAPI compatibility (no blocking API)
 
 ---
 
@@ -128,45 +130,7 @@
 
 ---
 
-### Phase 3: Upload System Implementation ✅ Completed
-
-#### 3.1 Scope
-Build the **upload workflow** (no AI editing yet in Phase 3):
-- Drag-and-drop upload UI
-- Upload **multiple video clips** (min 1, max 20)
-- Upload **single audio/music file** (exactly 1)
-- Show per-file progress + overall summary
-- Validate files (type, count, size, total size)
-- Allow removing previously uploaded files
-- Show preview thumbnails for uploaded videos
-- After upload completes: show previews + enable **“Process Now”** button (placeholder)
-- Preserve existing landing page design.
-
-#### 3.2 Upload Constraints (Confirmed)
-- **Video**: MP4, MOV, WebM
-  - Max size per clip: **500MB**
-  - Count: **1–20** clips
-- **Audio**: MP3, WAV
-  - Max size: **50MB**
-  - Count: **1** file
-- **Total upload budget per session**: **2GB**
-
-#### 3.3 Backend (APIs + Storage)
-**Goal:** local storage now, structured for future cloud storage.
-
-**Storage layout (local):**
-- `/backend/uploads/sessions/{sessionId}/videos/*`
-- `/backend/uploads/sessions/{sessionId}/audio/*`
-- `/backend/uploads/sessions/{sessionId}/thumbnails/*` (reserved)
-
-**Modular architecture for future:**
-- `services/storage_provider.py` (Local now, S3/R2 later)
-- `services/file_validator.py`
-- `services/upload_session_service.py`
-
----
-
-# Phase 4: AI-Powered AMV Generator MVP (CURRENT — Foundation First)
+# Phase 4: AI-Powered AMV Generator MVP (CURRENT)
 
 ## 4.1 Product Goal
 Create the first working MVP that **automatically generates a beat-synced anime AMV** from:
@@ -184,8 +148,8 @@ Create the first working MVP that **automatically generates a beat-synced anime 
 - Provide live updates while user stays on the page
 - Frontend polls every **3–5 seconds**
 
-**State machine:**
-`queued → analyzing → generating_timeline → rendering → completed` (or `failed`)
+**State machine (updated):**
+`queued → analyzing_audio → generating_timeline → rendering → completed` (or `failed`)
 
 **Max total processing time:** 10 minutes
 
@@ -196,9 +160,18 @@ Create the first working MVP that **automatically generates a beat-synced anime 
 backend/
   api/
   services/
+    audio_analyzer.py
+    ffmpeg_utils.py
+    timeline_generator.py
+    clip_selector.py
+    pacing_engine.py
+    render_service.py
   processing/
-  ffmpeg/
+    queue.py
+    worker.py
   models/
+    upload_session.py
+    generation_job.py
   uploads/
   exports/
   logs/
@@ -206,229 +179,245 @@ backend/
 ```
 
 ### 4.3.2 Data model additions (MongoDB)
-Extend UploadSession (or add a new ProcessingSession) to include:
-- `status`: queued/analyzing/generating_timeline/rendering/completed/failed
+Add a **GenerationJob** collection (preferred over mutating UploadSession heavily) OR extend UploadSession with job fields.
+
+**GenerationJob fields (recommended):**
+- `job_id`: string (UUID)
+- `session_id`: string
+- `status`: queued/analyzing_audio/generating_timeline/rendering/completed/failed
 - `progress_pct`: 0–100
 - `current_stage`: string
-- `audio_analysis`: { bpm, beats, drops, energy_curve }
+- `audio_analysis`: { bpm, beats, drops, energy_curve, sections }
 - `edit_timeline`: structured JSON
-- `export`: { storage_key, url/path, size_bytes, duration }
-- `ffmpeg_logs`: path or tail snippets (store pointer, not huge logs)
+- `export`: { path, size_bytes, duration }
+- `timings_ms`: { analyzing_audio, generating_timeline, rendering, total }
+- `ffmpeg_logs`: { last_trace_id, log_files[] } (pointers only)
 - `error_message`, `error_trace_id`
-- performance metrics:
-  - `timings_ms`: { probe, trim, concat, transition, export, total }
-- timestamps: stage started/completed
+- timestamps: `created_at`, `updated_at`, `started_at`, `completed_at`
 
-## 4.4 Core Engines to Implement
+## 4.4 Core Engines
 
 ### 4.4.1 Audio Analysis Engine (librosa) ✅ Implemented
 **File:** `backend/services/audio_analyzer.py`
 
-**Outputs (example):**
+Outputs include:
+- BPM
+- beat timestamps
+- drop/intensity timestamps
+- energy curve + energy sections
+
+### 4.4.2 Video Processing Engine (FFmpeg utilities) ✅ VERIFIED (Stability Gate PASSED)
+**File:** `backend/services/ffmpeg_utils.py`
+
+**Delivered:**
+- ✅ detailed execution logging (trace IDs, full stderr logs to `/backend/logs`)
+- ✅ performance metrics per operation
+- ✅ output integrity validation helper (`validate_output`)
+- ✅ modular transitions/effects
+- ✅ async-compatible subprocess execution
+
+**Test endpoints (verified):**
+- ✅ `POST /api/test/ffmpeg/probe`
+- ✅ `POST /api/test/ffmpeg/trim`
+- ✅ `POST /api/test/ffmpeg/concatenate`
+- ✅ `POST /api/test/ffmpeg/transition`
+- ✅ `GET /api/test/ffmpeg/metrics`
+
+**Report:** `/app/FFMPEG_STABILITY_GATE_REPORT.md`
+
+### 4.4.3 AI Timeline Generator (Rules + Weighted Random) 🔄 NOW
+**Goal:** Produce structured edit timeline JSON independent of FFmpeg implementation.
+
+**Responsibilities:**
+- map beat timestamps to cuts
+- map drops/intensity spikes to transitions
+- map energy levels to pacing
+- assign effects dynamically
+- generate structured edit timeline JSON
+
+**Output example:**
 ```json
 {
-  "bpm": 145,
-  "beats": [0.43, 0.84],
-  "drops": [32.1, 64.2],
-  "energy_curve": [{"time": 0.0, "energy": 0.12}]
+  "timeline": [
+    {
+      "clip": "clip_01.mp4",
+      "start": 0.0,
+      "end": 2.4,
+      "transition": "flash",
+      "effect": "zoom_shake",
+      "energy": "high"
+    }
+  ]
 }
 ```
 
-### 4.4.2 Video Processing Engine (FFmpeg utilities) 🔄 IN PROGRESS (Stability Gate)
-**File:** `backend/services/ffmpeg_utils.py`
+**Safety checks (must pass before rendering):**
+- no negative times; `start < end`
+- no overlaps unless explicitly allowed
+- total output duration ≤ audio duration and ≤ 180s cap
+- referenced clips exist and have sufficient duration
+- avoid empty timeline
 
-**Current state:**
-- ✅ Implemented core functions (probe, trim, concat, extract_audio, merge_audio)
-- ✅ Implemented initial transitions/effects (transition, zoom, shake, speed ramp, export)
-- 🔄 Needs stability hardening + comprehensive tests + integrity validation
-- 🔄 Needs detailed FFmpeg logging + performance metrics
-- 🔄 Needs async-compatible API test endpoints
+### 4.4.4 Clip Selection Engine 🔄 NOW
+**Rules:**
+- avoid repetitive clips (cooldowns, last-used penalty)
+- avoid reusing the same time ranges too frequently
+- weighted/random selection tuned by energy section:
+  - high energy: prefer motion-heavy clips (proxy via high FPS, higher bitrate, shorter shot lengths; future: optical flow)
+  - low energy: prefer longer, smoother clips
 
-**Design requirements (from latest user requirements):**
-- Transition/effect functions must be modular and independently testable
-- Each operation must validate output integrity (video stream present, duration > 0, playable container)
-- All intermediate outputs must be cleaned up after tests
-- Add timing/performance metrics per operation
-- Add detailed execution logging, including:
-  - fully logged FFmpeg commands (sanitized)
-  - stderr capture (tail + full log file option)
-  - structured error payloads
+### 4.4.5 Dynamic Pacing Engine 🔄 NOW
+**Rules:**
+- high BPM → faster cuts
+- low energy → longer cinematic shots
+- drops → stronger transitions/effects
+- calm sections → smoother pacing
+- anime-style AMV pacing:
+  - fast aggressive cuts during drops
+  - cinematic pauses during emotional sections
+  - smooth pacing transitions between energy levels
 
-**Integrity validation checklist (per output):**
-- file exists and size > minimum threshold
-- `ffprobe` confirms expected streams (video, optional audio)
-- duration is non-zero and within expected range tolerance
-- container/codec is compatible (`h264/aac` for mp4 where relevant)
+### 4.4.6 Render Service (Modular, Async) ⏭️ AFTER Timeline Generator
+**Responsibilities:**
+- validate generated timeline
+- execute a minimal, stable rendering pipeline using FFmpegUtils:
+  - trim segments
+  - apply transitions/effects (MVP subset)
+  - concatenate
+  - merge music
+  - export final
+- validate output integrity (non-empty, playable)
+- cleanup intermediates
 
-### 4.4.3 AI Edit Timeline Generator (Rules Engine) ⏭️ BLOCKED until FFmpeg utilities are verified
-Generate edit timeline JSON:
-- Beats → cuts
-- Drops → transitions
-- High energy → faster cuts + stronger effects
-- Low energy → smoother transitions + longer shots
+## 4.5 Async Processing Queue System (MVP) 🔄 NOW
+**Design:**
+- In-process asyncio Queue (single worker) for MVP
+- Persistent job record in MongoDB
+- Non-blocking API: `POST /api/generate` enqueues and returns `job_id`
+- Worker loop runs on FastAPI startup
 
-**Hard rule:** Timeline generation begins only after FFmpeg utilities + endpoints are tested and verified.
+**Stages:**
+- queued (0–5%)
+- analyzing_audio (5–25%)
+- generating_timeline (25–45%)
+- rendering (45–95%)
+- completed (100%)
+- failed (error)
 
-### 4.4.4 Render Pipeline (Async) ⏭️ After timeline generator
-- Validate session readiness
-- Audio analysis
-- Generate timeline
-- Render final output with FFmpeg
-- Save output to `/backend/exports/sessions/{sessionId}/final.mp4`
-- Update DB status + progress throughout
-- Cleanup temp/intermediate files
+**Logging requirements:**
+- queue execution logs
+- stage start/end logs
+- timeline generation logs
+- clip selection logs
+- pacing decision logs
+- render stage logs + ffmpeg trace IDs
 
-## 4.5 Processing Queue System (Async, MVP) ⏭️ After FFmpeg layer verified
-- In-process asyncio-based queue (single instance)
-- Background worker started on FastAPI startup
-- Job record persisted in MongoDB so state survives refresh
+## 4.6 API Endpoints (Phase 4 Generation)
 
-**Progress tracking (example):**
-- queued: 0–5%
-- analyzing: 5–25%
-- generating_timeline: 25–40%
-- rendering: 40–95%
-- completed: 100%
+### 4.6.1 Generation endpoints (NEW)
+- `POST /api/generate`
+  - body: `{ "session_id": "...", "style": "amv_default" }` (style optional)
+  - returns: `{ job_id }`
+- `GET /api/generate/{job_id}/status`
+  - returns: status, progress_pct, stage, error_message (if failed)
+- `GET /api/generate/{job_id}/timeline`
+  - returns: generated timeline JSON
+- `GET /api/generate/{job_id}/download`
+  - returns: final MP4 (FileResponse) or JSON with path
 
-## 4.6 API Endpoints (Phase 4)
-
-### 4.6.1 FFmpeg Test Endpoints (NEW — must implement before timeline work)
-Add endpoints for verifying FFmpeg utilities in isolation (async, non-blocking implementation):
-- `POST /api/test/ffmpeg/trim`
-- `POST /api/test/ffmpeg/concatenate`
-- `POST /api/test/ffmpeg/transition`
-- (optional) `POST /api/test/ffmpeg/effect/zoom`
-- (optional) `POST /api/test/ffmpeg/effect/shake`
-- (optional) `POST /api/test/ffmpeg/effect/speed_ramp`
-
-Each endpoint must:
-- accept uploaded/selected session media
-- run the operation asynchronously (or in background task pattern)
-- return:
-  - output path/key
-  - probe metadata of output
-  - integrity validation results
-  - timing metrics
-  - log trace id / location
-
-### 4.6.2 AMV Generation Endpoints (Later)
-Add endpoints (keeping Phase 3 upload endpoints):
-- `POST /api/amv/sessions/{session_id}/generate` → enqueue job
-- `GET /api/amv/sessions/{session_id}/status` → status + progress + stage
-- `GET /api/amv/sessions/{session_id}/timeline` → timeline JSON (optional)
-- `GET /api/amv/sessions/{session_id}/audio-analysis` → analysis JSON (optional)
-- `GET /api/amv/sessions/{session_id}/download` → download final MP4 (or signed URL later)
+### 4.6.2 Test generation endpoint (NEW)
+- `POST /api/generate/test`
+  - Uses uploaded clips + uploaded audio (from session)
+  - Runs: analyze → timeline → render
+  - Intended for integration validation (not production)
 
 ## 4.7 Storage (Phase 4)
 Local storage for MVP:
 - uploads: `/backend/uploads/sessions/{session_id}/...`
-- exports: `/backend/exports/sessions/{session_id}/final.mp4`
-- logs: `/backend/logs/sessions/{session_id}/ffmpeg.log`
-- temp: `/backend/temp/*` (ensure cleanup)
+- temp: `/backend/temp/jobs/{job_id}/...`
+- exports: `/backend/exports/jobs/{job_id}/final.mp4`
+- logs: `/backend/logs/*` (FFmpeg stderr per operation; optional per-job summary log)
 
-Design storage keys to be cloud-ready (S3/R2 prefix-compatible).
+All paths must be cloud-ready (prefix compatible for future S3/R2).
 
-## 4.8 Frontend Changes (Phase 4) ⏭️ After backend generation endpoints exist
+## 4.8 Frontend Changes (Phase 4) ⏭️ After generation endpoints exist
 Maintain existing look/feel.
 
 ### Pages/UI
 - `/upload` enhancements:
-  - Replace placeholder “Process Now” with **Generate AMV** (calls generate endpoint)
+  - Replace placeholder “Process Now” with **Generate AMV** (calls `POST /api/generate`)
   - Show processing state machine + progress bar
   - Poll status every 3–5 seconds
-  - When completed: show preview video player + download button
+  - When completed: preview player + download button
 
-### Components (reusable)
-- `ProcessingStatusCard` (stage + message)
-- `ProcessingProgressBar` (overall + stage)
-- `ExportPlayer` (HTML5 video)
-- `DownloadButton`
-
-## 4.9 Logging + Debugging (Expanded)
+## 4.9 Logging + Debugging (Phase 4)
 - Structured logs for:
-  - uploads
-  - librosa analysis
-  - timeline generation
-  - FFmpeg command lines + stderr capture
-- Add per-operation FFmpeg log context:
-  - `operation_id` / `trace_id`
-  - command
-  - return code
-  - stderr tail
-  - full stderr path (optional)
-  - elapsed time
-- Store a per-session log file path (don’t store massive logs in MongoDB)
+  - audio analysis
+  - timeline generation decisions
+  - clip selection weights + outcomes
+  - pacing rules applied
+  - render stage and FFmpeg trace IDs
+  - queue job lifecycle
+- Store pointers in MongoDB rather than raw logs
 
-## 4.10 Testing Plan (Phase 4) (Updated: Stability-first)
+## 4.10 Testing Plan (Phase 4)
 
-### 4.10.1 FFmpeg Utilities Test Harness (NEW — MUST COMPLETE FIRST)
-Create deterministic tests using generated media (avoid relying on user uploads):
-- Generate synthetic video clips via ffmpeg filters (color test sources)
-- Generate synthetic audio via sine wave
+### 4.10.1 Unit tests (NEW)
+- timeline generator:
+  - stable deterministic output given fixed random seed
+  - no overlaps / invalid segments
+  - respects duration caps
+- clip selection:
+  - enforces cooldown/anti-repetition
+  - energy-based weighting changes distribution
+- pacing engine:
+  - high BPM produces shorter average cuts
+  - drops produce stronger transitions/effects
 
-**Required tests for `FFmpegUtils`:**
-- probe:
-  - returns duration/size/streams; handles missing audio
-- trim:
-  - output duration within tolerance; playable mp4
-- concatenate:
-  - output duration approx sum of inputs; playable mp4
-- extract_audio:
-  - output has audio stream; non-zero duration
-- merge_audio:
-  - output contains video + new audio; duration trimmed correctly
-- apply_transition:
-  - output playable; duration expected; transition types validated
-- apply_zoom / apply_shake / apply_speed_ramp:
-  - output playable; duration expected; independent testability
-- export_final:
-  - outputs correct resolution/fps; `+faststart`; size cap logic
+### 4.10.2 Integration tests (NEW)
+- `POST /api/generate/test` with a small session:
+  - validates job transitions and progress updates
+  - validates final output exists and passes integrity
+  - validates cleanup of intermediates
 
-**Test artifacts requirements:**
-- Validate integrity after each operation via `ffprobe` checks
-- Ensure cleanup of intermediates (even on failure)
-- Record performance metrics per operation
-
-### 4.10.2 Integration Tests (After FFmpeg utilities verified)
-- Exercise `/api/test/ffmpeg/*` endpoints end-to-end
-- Confirm async behavior (no blocking; timeouts; predictable failure errors)
-
-### 4.10.3 Unit tests (Later)
-- audio analyzer outputs BPM/beats/drops
-- timeline generator mapping rules
-
-### 4.10.4 E2E (Later)
+### 4.10.3 E2E (Later)
 - upload → generate → poll → preview → download
 
 ---
 
 ## 3. Next Actions (Updated)
 
-### Stability Gate: FFmpeg Foundation (NOW)
-1. 🔄 Review and harden `backend/services/ffmpeg_utils.py`
-   - add structured logging + stderr capture
-   - add output integrity validation helpers
-   - add consistent exception payloads
-   - add performance timing metrics wrappers
-   - ensure all functions are reusable and side-effect controlled
-2. 🔄 Create comprehensive local test harness:
-   - `backend/tests/test_ffmpeg_core.py` (or similar)
-   - synthetic media generation
-   - automated cleanup
-   - produce a test report artifact (JSON)
-3. 🔄 Add FastAPI test endpoints for FFmpeg utilities:
-   - trim, concatenate, transition (+ optional effects)
-   - ensure async-compatible execution
-4. 🔄 Verify endpoints via curl/python scripts and confirm outputs play.
+### Completed Foundation
+1. ✅ Audio analysis service implemented (`audio_analyzer.py`).
+2. ✅ FFmpeg utilities stability gate passed:
+   - hardened utilities + integrity validation + metrics
+   - test scripts and verified test endpoints
 
-### After Stability Gate Passes
-5. Deploy backend to Railway + configure MongoDB + CORS.
-6. Update Vercel `REACT_APP_BACKEND_URL` and redeploy frontend.
-7. Implement timeline generator (rules engine).
-8. Implement async queue worker + persisted status/progress.
-9. Implement full render pipeline and AMV endpoints.
-10. Update frontend `/upload` with progress + preview + download.
-11. Run one full E2E test pass for “upload → generate → download”.
+### Phase 4: Timeline + Queue + MVP Render (NOW)
+3. 🔄 Implement **GenerationJob** model + MongoDB persistence.
+4. 🔄 Implement **async queue + background worker** (startup task).
+5. 🔄 Implement **Timeline Generator** service:
+   - pacing engine
+   - clip selection engine
+   - transition/effect assignment
+   - timeline validation
+6. 🔄 Implement **Render Service** that consumes timeline and uses FFmpegUtils.
+7. 🔄 Add generation endpoints:
+   - `POST /api/generate`
+   - `GET /api/generate/{job_id}/status`
+   - `GET /api/generate/{job_id}/timeline`
+   - `GET /api/generate/{job_id}/download`
+   - `POST /api/generate/test`
+8. 🔄 Integration test pass:
+   - create session with 2–3 clips + audio
+   - run generate/test
+   - validate final mp4 integrity
+
+### After MVP Pipeline Works
+9. Deploy backend to Railway + configure MongoDB + CORS.
+10. Update Vercel `REACT_APP_BACKEND_URL` and redeploy frontend.
+11. Update frontend `/upload` with progress + preview + download.
+12. Run full E2E test pass for “upload → generate → download”.
 
 ---
 
@@ -440,26 +429,31 @@ Create deterministic tests using generated media (avoid relying on user uploads)
   - progress UI + remove files
   - responsive layout
 
-### Phase 4 Stability Gate (NEW — Must pass before timeline work)
-- FFmpeg utilities are fully tested with deterministic inputs.
-- All operations produce validated, playable outputs.
-- Detailed logging exists for every FFmpeg execution (command + stderr tail + trace id).
-- Performance metrics are captured per operation.
-- Test endpoints exist and are verified working.
-- Intermediate files are cleaned up reliably.
-- Utilities are modular and reusable for the future render pipeline.
-- Async FastAPI compatibility is maintained (no blocking request thread; timeouts handled).
+### Phase 4 Foundation (Completed)
+- ✅ FFmpeg utilities are fully tested with deterministic inputs.
+- ✅ All operations produce validated, playable outputs.
+- ✅ Detailed logging exists for every FFmpeg execution (command + stderr + trace id).
+- ✅ Performance metrics captured per operation.
+- ✅ Test endpoints exist and are verified working.
+- ✅ Intermediate files cleaned up reliably.
+- ✅ Async FastAPI compatibility maintained.
 
-### Phase 4 MVP (After Stability Gate)
-- Users can click **Generate AMV** and job is queued.
-- Status progresses: queued → analyzing → generating_timeline → rendering → completed/failed.
-- Progress % updates persist in DB.
-- Final MP4 is rendered with beat-synced cuts.
-- Output meets constraints (1080p 30fps H.264 AAC; fallback to 720p; ≤3min; ≤250MB).
-- Frontend shows preview player + download button.
-- Errors are actionable, logged, and surfaced cleanly.
-- Architecture is modular and ready for:
-  - Cloud storage migration
-  - FFmpeg feature expansion
-  - Scene detection / subtitles / style modes
-  - Queue scaling
+### Phase 4 MVP (Target)
+- User can start generation with `POST /api/generate` and receives `job_id`.
+- Job status progresses: queued → analyzing_audio → generating_timeline → rendering → completed/failed.
+- Progress % updates persist in MongoDB.
+- Timeline JSON is generated, validated, and downloadable.
+- Final MP4 is rendered and downloadable, and passes integrity checks.
+- Output meets constraints:
+  - 1080p 30fps H.264 + AAC (fallback to 720p)
+  - ≤ 3 minutes
+  - ≤ 250MB
+- Anime-style AMV pacing achieved:
+  - aggressive cuts at drops
+  - cinematic pauses in low energy sections
+  - smooth transitions between energy levels
+- Architecture remains modular and future-ready:
+  - cloud storage migration
+  - GPU acceleration
+  - expanded effects
+  - distributed job queue
