@@ -12,6 +12,17 @@ python-dotenv==1.0.1
 pydantic==2.7.1
 pydantic-settings==2.2.1
 
+# Audio Processing (for AMV generation)
+librosa==0.11.0
+soundfile==0.12.1
+audioread==3.0.1
+numba==0.59.1
+scipy==1.13.0
+numpy==1.26.4
+
+# Video Processing
+ffmpeg-python==0.2.0
+
 # Image Processing (for thumbnails)
 Pillow==10.3.0
 
