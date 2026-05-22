@@ -5,46 +5,54 @@
   },
   {
     "content": "Create Dockerfile with apt-installed ffmpeg + python deps",
-    "status": "in_progress"
+    "status": "completed"
   },
   {
     "content": "Update railway.json to use DOCKERFILE builder; reconcile railway.toml",
-    "status": "pending"
+    "status": "completed"
   },
   {
     "content": "Add FFmpeg availability check + BinaryUnavailableError in ffmpeg_utils.py",
-    "status": "pending"
+    "status": "completed"
   },
   {
     "content": "Update verify_deps.py: write JSON status file, log paths + versions",
-    "status": "pending"
+    "status": "completed"
   },
   {
     "content": "Update server.py /api/generate + test endpoints to return 503 if ffmpeg missing",
-    "status": "pending"
+    "status": "completed"
   },
   {
     "content": "Update processing_queue.py to mark jobs failed with clear message if ffmpeg missing",
-    "status": "pending"
+    "status": "completed"
   },
   {
     "content": "Add /api/health/ffmpeg diagnostic endpoint",
-    "status": "pending"
+    "status": "completed"
+  },
+  {
+    "content": "Add nixpacks.toml fallback for ffmpeg install (dual strategy)",
+    "status": "completed"
+  },
+  {
+    "content": "Fix healthcheck: /health endpoint + 300s timeout + bounded MongoDB ping",
+    "status": "completed"
   },
   {
     "content": "Verify locally: lint, supervisor restart, curl health/ffmpeg/probe",
-    "status": "pending"
+    "status": "completed"
   },
   {
-    "content": "Commit and push to GitHub (request PAT)",
-    "status": "pending"
+    "content": "Commit and push to GitHub",
+    "status": "completed"
   },
   {
-    "content": "Monitor Railway deployment logs",
-    "status": "pending"
+    "content": "Wait for Railway redeploy with new commit 138b419 (auto-deploy not triggering)",
+    "status": "in_progress"
   },
   {
-    "content": "Full E2E production test",
+    "content": "Full E2E production test: upload, analyze, generate, render, download",
     "status": "pending"
   }
 ]
