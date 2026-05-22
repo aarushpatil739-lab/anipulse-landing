@@ -40,19 +40,23 @@
     "status": "completed"
   },
   {
-    "content": "Verify locally: lint, supervisor restart, curl health/ffmpeg/probe",
+    "content": "Introduce start.sh single source of truth for container startup",
     "status": "completed"
   },
   {
-    "content": "Commit and push to GitHub",
+    "content": "Graceful per-segment effect fallback so a single failing effect doesn't kill render",
     "status": "completed"
   },
   {
-    "content": "Wait for Railway redeploy with new commit 138b419 (auto-deploy not triggering)",
-    "status": "in_progress"
+    "content": "Bulletproof concatenate with concat-filter re-encode fallback",
+    "status": "completed"
+  },
+  {
+    "content": "Memory-bounded export for Railway 512MB trial cap",
+    "status": "completed"
   },
   {
     "content": "Full E2E production test: upload, analyze, generate, render, download",
-    "status": "pending"
+    "status": "completed"
   }
 ]
