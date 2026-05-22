@@ -1,6 +1,62 @@
 [
   {
-    "content": "Phase 3: Testing - End-to-end upload workflow testing",
+    "content": "Phase 4: Install dependencies (librosa, ffmpeg-python, numpy, scipy)",
     "status": "completed"
+  },
+  {
+    "content": "Phase 4: Create audio analysis service with librosa",
+    "status": "in_progress"
+  },
+  {
+    "content": "Phase 4: Create FFmpeg utilities service",
+    "status": "pending"
+  },
+  {
+    "content": "Phase 4: Create AI timeline generator",
+    "status": "pending"
+  },
+  {
+    "content": "Phase 4: Create async render pipeline",
+    "status": "pending"
+  },
+  {
+    "content": "Phase 4: Create processing queue system",
+    "status": "pending"
+  },
+  {
+    "content": "Phase 4: Update MongoDB models for processing state",
+    "status": "pending"
+  },
+  {
+    "content": "Phase 4: Create AMV generation API endpoints",
+    "status": "pending"
+  },
+  {
+    "content": "Phase 4: Update frontend upload page for processing UI",
+    "status": "pending"
+  },
+  {
+    "content": "Phase 4: Add processing status polling",
+    "status": "pending"
+  },
+  {
+    "content": "Phase 4: Add video preview player",
+    "status": "pending"
+  },
+  {
+    "content": "Phase 4: Add download button",
+    "status": "pending"
+  },
+  {
+    "content": "Phase 4: Test audio analysis",
+    "status": "pending"
+  },
+  {
+    "content": "Phase 4: Test video processing",
+    "status": "pending"
+  },
+  {
+    "content": "Phase 4: Test full pipeline end-to-end",
+    "status": "pending"
   }
 ]
