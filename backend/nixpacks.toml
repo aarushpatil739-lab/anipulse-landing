@@ -1,0 +1,48 @@
+# Nixpacks configuration for Railway
+# --------------------------------------------------------------
+# This file is used when the Railway service is configured with
+# Builder = NIXPACKS (default).  If the service is configured with
+# Builder = DOCKERFILE, this file is ignored and ./Dockerfile is
+# used instead.
+#
+# In EITHER case, the goal is the same: install the `ffmpeg` system
+# package (which provides both `ffmpeg` and `ffprobe` binaries) so
+# the render pipeline in services/render_service.py can work.
+# --------------------------------------------------------------
+
+[phases.setup]
+# `aptPkgs` is the Nixpacks-native way to install Debian/Ubuntu
+# packages.  Order: ffmpeg first (the critical one), then audio
+# I/O libs required by librosa/soundfile.
+aptPkgs = [
+  "ffmpeg",
+  "libsndfile1",
+  "libsndfile1-dev",
+  "libgomp1",
+  "build-essential",
+  "curl",
+  "ca-certificates",
+]
+
+[phases.install]
+# Use plain pip; the slim image already ships with a recent pip.
+cmds = [
+  "pip install --upgrade pip setuptools wheel",
+  "pip install --no-cache-dir -r requirements.txt",
+]
+
+[phases.build]
+# Verify the toolchain is present at build time. Fails the build
+# loudly if ffmpeg ends up missing -- much better than a runtime
+# crash on the first /api/generate request.
+cmds = [
+  "ffmpeg -version",
+  "ffprobe -version",
+]
+
+[start]
+# Run verify_deps.py first so the resolved paths and versions are
+# printed to the Railway logs on every cold start.  Always exits 0
+# so the container does not crash-loop on a missing binary; the API
+# itself surfaces /api/health/ffmpeg with HTTP 200 + available=false.
+cmd = "python verify_deps.py || true; exec uvicorn server:app --host 0.0.0.0 --port $PORT --workers 1 --log-level info"
