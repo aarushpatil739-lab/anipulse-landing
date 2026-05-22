@@ -1,6 +1,50 @@
 [
   {
-    "content": "Frontend: Polish error messages and success feedback",
+    "content": "Inspect current Aptfile, verify_deps.py, ffmpeg_utils.py, railway.toml",
     "status": "completed"
+  },
+  {
+    "content": "Create Dockerfile with apt-installed ffmpeg + python deps",
+    "status": "in_progress"
+  },
+  {
+    "content": "Update railway.json to use DOCKERFILE builder; reconcile railway.toml",
+    "status": "pending"
+  },
+  {
+    "content": "Add FFmpeg availability check + BinaryUnavailableError in ffmpeg_utils.py",
+    "status": "pending"
+  },
+  {
+    "content": "Update verify_deps.py: write JSON status file, log paths + versions",
+    "status": "pending"
+  },
+  {
+    "content": "Update server.py /api/generate + test endpoints to return 503 if ffmpeg missing",
+    "status": "pending"
+  },
+  {
+    "content": "Update processing_queue.py to mark jobs failed with clear message if ffmpeg missing",
+    "status": "pending"
+  },
+  {
+    "content": "Add /api/health/ffmpeg diagnostic endpoint",
+    "status": "pending"
+  },
+  {
+    "content": "Verify locally: lint, supervisor restart, curl health/ffmpeg/probe",
+    "status": "pending"
+  },
+  {
+    "content": "Commit and push to GitHub (request PAT)",
+    "status": "pending"
+  },
+  {
+    "content": "Monitor Railway deployment logs",
+    "status": "pending"
+  },
+  {
+    "content": "Full E2E production test",
+    "status": "pending"
   }
 ]
