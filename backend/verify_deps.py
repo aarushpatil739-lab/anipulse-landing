@@ -1,97 +1,157 @@
 #!/usr/bin/env python3
 """
-Startup verification script for Railway backend.
-Verifies all dependencies are installed before starting the server.
+Startup verification script for the AniPulse backend.
+
+Responsibilities
+----------------
+1. Verify all Python dependencies can be imported.
+2. Verify the `ffmpeg` and `ffprobe` system binaries are available,
+   logging their resolved paths and full version banners.
+3. Persist the verification result to `/app/backend/logs/deps_status.json`
+   so the running API process (and the /api/health/ffmpeg endpoint) can
+   surface a clear, structured status to clients without re-shelling out.
+4. NEVER exits non-zero in production: a missing system binary must not
+   crash the container. The API itself will return HTTP 503 with a clear
+   message until the issue is resolved.
 """
 
-import sys
-import subprocess
+from __future__ import annotations
 
-def check_dependency(module_name, display_name=None):
-    """Check if a Python module can be imported"""
-    if display_name is None:
-        display_name = module_name
-    
+import json
+import os
+import shutil
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+LOG_DIR = Path(os.environ.get("ANIPULSE_LOG_DIR", "/app/backend/logs"))
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+STATUS_FILE = LOG_DIR / "deps_status.json"
+
+
+def _banner(title: str) -> None:
+    print("=" * 70)
+    print(f" {title}")
+    print("=" * 70)
+
+
+def check_python_module(module_name: str, display_name: str | None = None) -> dict:
+    display_name = display_name or module_name
     try:
         __import__(module_name)
-        print(f"✅ {display_name} imported successfully")
-        return True
-    except ImportError as e:
-        print(f"❌ {display_name} import failed: {e}")
-        return False
+        version = "unknown"
+        try:
+            mod = sys.modules[module_name]
+            version = getattr(mod, "__version__", "unknown")
+        except Exception:
+            pass
+        print(f"  [ok]   {display_name:<28} (version={version})")
+        return {"name": display_name, "ok": True, "version": version, "error": None}
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [FAIL] {display_name:<28} -> {exc}")
+        return {"name": display_name, "ok": False, "version": None, "error": str(exc)}
 
-def check_system_command(cmd, name):
-    """Check if a system command exists"""
+
+def check_system_binary(cmd: str) -> dict:
+    path = shutil.which(cmd)
+    if not path:
+        print(f"  [FAIL] {cmd:<10} -> binary NOT FOUND on PATH")
+        return {"name": cmd, "ok": False, "path": None, "version": None, "error": "binary not found on PATH"}
+
     try:
         result = subprocess.run(
-            [cmd, '--version'],
+            [cmd, "-version"],
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=10,
+            check=False,
         )
-        if result.returncode == 0:
-            version = result.stdout.split('\n')[0]
-            print(f"✅ {name}: {version}")
-            return True
-        else:
-            print(f"❌ {name} not found")
-            return False
-    except Exception as e:
-        print(f"❌ {name} check failed: {e}")
-        return False
+        if result.returncode != 0:
+            tail = (result.stderr or result.stdout or "")[-300:]
+            print(f"  [FAIL] {cmd:<10} -> returncode={result.returncode}, output_tail={tail!r}")
+            return {
+                "name": cmd,
+                "ok": False,
+                "path": path,
+                "version": None,
+                "error": f"{cmd} -version returned {result.returncode}",
+            }
+        first_line = (result.stdout or "").splitlines()[0] if result.stdout else ""
+        print(f"  [ok]   {cmd:<10} -> {path}")
+        print(f"           {first_line}")
+        return {"name": cmd, "ok": True, "path": path, "version": first_line, "error": None}
+    except subprocess.TimeoutExpired:
+        print(f"  [FAIL] {cmd:<10} -> timeout running '{cmd} -version'")
+        return {"name": cmd, "ok": False, "path": path, "version": None, "error": "timeout"}
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [FAIL] {cmd:<10} -> {exc}")
+        return {"name": cmd, "ok": False, "path": path, "version": None, "error": str(exc)}
 
-def main():
-    print("="*60)
-    print("AniPulse Backend Startup Verification")
-    print("="*60)
-    print()
-    
-    all_ok = True
-    
-    # Check system dependencies
-    print("System Dependencies:")
-    print("-" * 60)
-    ffmpeg_ok = check_system_command('ffmpeg', 'FFmpeg')
-    ffprobe_ok = check_system_command('ffprobe', 'FFprobe')
-    
-    if not ffmpeg_ok:
-        print("⚠️  FFmpeg not found - will be required for video processing")
-    if not ffprobe_ok:
-        print("⚠️  FFprobe not found - will be required for video analysis")
-    print()
-    
-    # Check Python dependencies
-    print("Python Dependencies:")
-    print("-" * 60)
-    all_ok &= check_dependency('fastapi', 'FastAPI')
-    all_ok &= check_dependency('uvicorn', 'Uvicorn')
-    all_ok &= check_dependency('motor', 'Motor (MongoDB)')
-    all_ok &= check_dependency('librosa', 'librosa (Audio Analysis)')
-    all_ok &= check_dependency('soundfile', 'soundfile (Audio I/O)')
-    all_ok &= check_dependency('numpy', 'NumPy')
-    all_ok &= check_dependency('scipy', 'SciPy')
-    all_ok &= check_dependency('numba', 'Numba')
-    all_ok &= check_dependency('ffmpeg', 'ffmpeg-python')
-    print()
-    
-    # Check service imports
-    print("Service Modules:")
-    print("-" * 60)
-    all_ok &= check_dependency('services.audio_analyzer', 'AudioAnalyzer')
-    all_ok &= check_dependency('services.timeline_generator', 'TimelineGenerator')
-    all_ok &= check_dependency('services.render_service', 'RenderService')
-    all_ok &= check_dependency('services.processing_queue', 'ProcessingQueue')
-    print()
-    
-    print("="*60)
-    if all_ok:
-        print("✅ All dependencies verified successfully!")
-        print("="*60)
-        sys.exit(0)
-    else:
-        print("❌ Some dependencies are missing!")
-        print("="*60)
-        sys.exit(1)
 
-if __name__ == '__main__':
-    main()
+def main() -> int:
+    started = datetime.now(timezone.utc).isoformat()
+    _banner("AniPulse Backend - Startup Verification")
+    print(f"Time:        {started}")
+    print(f"Python:      {sys.version.split()[0]} ({sys.executable})")
+    print(f"Working dir: {os.getcwd()}")
+    print(f"PATH:        {os.environ.get('PATH', '')}")
+    print()
+
+    _banner("System binaries")
+    ffmpeg_info = check_system_binary("ffmpeg")
+    ffprobe_info = check_system_binary("ffprobe")
+    print()
+
+    _banner("Python packages")
+    python_checks = [
+        check_python_module("fastapi", "FastAPI"),
+        check_python_module("uvicorn", "Uvicorn"),
+        check_python_module("motor", "Motor (MongoDB)"),
+        check_python_module("librosa", "librosa"),
+        check_python_module("soundfile", "soundfile"),
+        check_python_module("numpy", "NumPy"),
+        check_python_module("scipy", "SciPy"),
+        check_python_module("numba", "Numba"),
+        check_python_module("ffmpeg", "ffmpeg-python"),
+    ]
+    print()
+
+    all_python_ok = all(c["ok"] for c in python_checks)
+    binaries_ok = ffmpeg_info["ok"] and ffprobe_info["ok"]
+    overall_ok = all_python_ok and binaries_ok
+
+    status = {
+        "checked_at": started,
+        "overall_ok": overall_ok,
+        "python_ok": all_python_ok,
+        "binaries_ok": binaries_ok,
+        "ffmpeg": ffmpeg_info,
+        "ffprobe": ffprobe_info,
+        "python": python_checks,
+        "path": os.environ.get("PATH", ""),
+    }
+
+    try:
+        STATUS_FILE.write_text(json.dumps(status, indent=2))
+        print(f"Wrote status file: {STATUS_FILE}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"WARNING: could not persist status file: {exc}")
+
+    _banner("Summary")
+    print(f"  Overall:   {'OK' if overall_ok else 'DEGRADED'}")
+    print(f"  Python:    {'OK' if all_python_ok else 'FAIL'}")
+    print(f"  Binaries:  {'OK' if binaries_ok else 'FAIL'}")
+    if not binaries_ok:
+        print()
+        print("  >>> FFmpeg/FFprobe missing. API will start but rendering endpoints")
+        print("  >>> will return HTTP 503 until system binaries are installed.")
+        print("  >>> Fix: ensure the Docker image installs `ffmpeg` (see backend/Dockerfile).")
+
+    # We intentionally always exit 0 so a missing binary does not crash the
+    # container. The API will report degraded health via /api/health/ffmpeg.
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

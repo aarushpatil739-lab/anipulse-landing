@@ -23,6 +23,11 @@ from services.audio_analyzer import AudioAnalyzer
 from services.timeline_generator import TimelineGenerator
 from services.render_service import RenderService
 from services.upload_session_service import UploadSessionService
+from services.ffmpeg_availability import (
+    FFmpegBinaryMissingError,
+    ensure_available as ensure_ffmpeg_available,
+    is_available as ffmpeg_is_available,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +133,21 @@ class ProcessingQueue:
             return
         
         try:
+            # Pre-flight: ensure FFmpeg toolchain is available before doing any
+            # of the heavy stages. If missing, fail fast with a clear,
+            # user-facing message instead of blowing up mid-render.
+            try:
+                ensure_ffmpeg_available()
+            except FFmpegBinaryMissingError as missing_exc:
+                logger.error(f"[{job_id}] FFmpeg toolchain missing: {missing_exc}")
+                job.mark_failed(
+                    error=str(missing_exc),
+                    stage="preflight",
+                )
+                job.error_stage = "preflight_ffmpeg_missing"
+                await self.job_service.update_job(job)
+                return
+
             # Stage 1: Analyzing Audio (5-25%)
             await self._stage_analyze_audio(job)
             
@@ -149,6 +169,11 @@ class ProcessingQueue:
                 f"Job {job_id} completed successfully in {elapsed_ms/1000:.1f}s"
             )
             
+        except FFmpegBinaryMissingError as e:
+            logger.error(f"Job {job_id} failed (ffmpeg missing): {e}")
+            job.mark_failed(str(e), stage="ffmpeg_missing")
+            await self.job_service.update_job(job)
+
         except Exception as e:
             logger.error(f"Job {job_id} failed: {e}", exc_info=True)
             

@@ -92,3 +92,10 @@ test_reports/
 
 # Logs
 *.log
+
+# AniPulse backend runtime artifacts (not source code)
+backend/logs/
+backend/temp/
+backend/exports/
+backend/uploads/
+backend/test_media/generated_*.mp4

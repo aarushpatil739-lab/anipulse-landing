@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
+import json
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
@@ -229,6 +230,28 @@ async def generate_amv(request: GenerateRequest):
     Returns job_id for tracking progress
     """
     try:
+        # Pre-flight: confirm the rendering toolchain is installed in this
+        # runtime. If not, return HTTP 503 immediately with a clear, machine
+        # readable error so the frontend can show a banner instead of having
+        # the job silently fail seconds later.
+        if not ffmpeg_is_available():
+            status = ffmpeg_status_dict()
+            logger.error(f"/api/generate rejected: ffmpeg toolchain missing -> {status['missing']}")
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "ffmpeg_unavailable",
+                    "message": (
+                        "Rendering backend is not configured: "
+                        f"missing system binaries {status['missing']}. "
+                        "Please contact support / redeploy the backend image."
+                    ),
+                    "missing": status["missing"],
+                    "ffmpeg": status["ffmpeg"],
+                    "ffprobe": status["ffprobe"],
+                },
+            )
+
         # Validate session exists and is ready
         session = await upload_service.get_session(request.session_id)
         if not session:
@@ -396,6 +419,12 @@ async def get_queue_stats():
 # ========== FFMPEG TEST ENDPOINTS ==========
 
 from services.ffmpeg_utils import FFmpegUtils, FFmpegError
+from services.ffmpeg_availability import (
+    FFmpegBinaryMissingError,
+    ensure_available as ensure_ffmpeg_available,
+    is_available as ffmpeg_is_available,
+    status_dict as ffmpeg_status_dict,
+)
 from fastapi import BackgroundTasks
 import tempfile
 import shutil
@@ -428,6 +457,21 @@ class TransitionRequest(FFmpegTestRequest):
 async def generate_test_video(name: str = "test", duration: float = 3.0, 
                               color: str = "blue") -> str:
     """Generate a synthetic test video for testing"""
+    # Refuse early if the toolchain is missing in this runtime.
+    if not ffmpeg_is_available():
+        status = ffmpeg_status_dict()
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "ffmpeg_unavailable",
+                "message": (
+                    "Cannot generate test video: ffmpeg toolchain missing "
+                    f"({status['missing']})."
+                ),
+                "missing": status["missing"],
+            },
+        )
+
     output_path = f"/app/backend/temp/{name}_{uuid.uuid4().hex}.mp4"
     
     cmd = [
@@ -458,6 +502,36 @@ async def generate_test_video(name: str = "test", duration: float = 3.0,
         raise HTTPException(status_code=500, detail="Failed to generate test video")
     
     return output_path
+
+@api_router.get("/health/ffmpeg")
+async def health_ffmpeg():
+    """
+    Diagnostic endpoint that reports whether ffmpeg/ffprobe are installed
+    in the runtime image. Used as the Railway healthcheck target.
+
+    Always returns HTTP 200 (so Railway does not endlessly restart on a
+    missing binary) but flags `available=false` in the body when broken.
+    The /api/generate endpoint refuses to start jobs when this is false.
+    """
+    status = ffmpeg_status_dict()
+
+    deps_file = Path("/app/backend/logs/deps_status.json")
+    deps_snapshot = None
+    if deps_file.exists():
+        try:
+            deps_snapshot = json.loads(deps_file.read_text())
+        except Exception as exc:  # noqa: BLE001
+            deps_snapshot = {"error": f"could not parse deps_status.json: {exc}"}
+
+    return {
+        "service": "anipulse-backend",
+        "available": status["available"],
+        "missing": status["missing"],
+        "ffmpeg": status["ffmpeg"],
+        "ffprobe": status["ffprobe"],
+        "startup_check": deps_snapshot,
+    }
+
 
 @api_router.post("/test/ffmpeg/probe")
 async def test_probe(request: FFmpegTestRequest):

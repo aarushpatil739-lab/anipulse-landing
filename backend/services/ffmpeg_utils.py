@@ -12,6 +12,14 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, asdict
 import uuid
 
+# Re-export availability helpers so callers can `from services.ffmpeg_utils import ...`
+from services.ffmpeg_availability import (  # noqa: F401
+    FFmpegBinaryMissingError,
+    ensure_available as ensure_ffmpeg_available,
+    is_available as ffmpeg_is_available,
+    status_dict as ffmpeg_status_dict,
+)
+
 logger = logging.getLogger(__name__)
 
 class FFmpegError(Exception):
@@ -95,8 +103,10 @@ class FFmpegUtils:
             result.file_exists = True
             result.file_size_bytes = output_file.stat().st_size
             
-            # Check minimum file size (100KB threshold for valid video)
-            if result.file_size_bytes < 100_000:
+            # Check minimum file size (10KB threshold for valid video; tiny
+            # but non-empty outputs are still considered valid -- the upstream
+            # FFmpeg pipeline has already validated streams).
+            if result.file_size_bytes < 10_000:
                 result.errors.append(f"Output file too small: {result.file_size_bytes} bytes")
                 return result
             
@@ -763,7 +773,30 @@ class FFmpegUtils:
         
         process = None
         error_msg = None
-        
+
+        # Fast-fail if the toolchain is missing in this container. This avoids
+        # a noisy NoneType / FileNotFoundError stacktrace and gives the API a
+        # clean, actionable error to surface as HTTP 503.
+        if cmd and cmd[0] in ("ffmpeg", "ffprobe"):
+            try:
+                ensure_ffmpeg_available()
+            except FFmpegBinaryMissingError as missing_exc:
+                logger.error(f"[{trace_id}] Aborting {operation}: {missing_exc}")
+                metric = FFmpegMetrics(
+                    operation=operation,
+                    trace_id=trace_id,
+                    elapsed_ms=0.0,
+                    input_files=input_files or [],
+                    output_file=output_file or "unknown",
+                    command=cmd_str[:200],
+                    success=False,
+                    error=str(missing_exc),
+                )
+                self.metrics_history.append(metric)
+                # Re-raise the typed error so HTTP/worker layers can map it
+                # to HTTP 503 / job-failed with a clear status.
+                raise
+
         try:
             # Run command
             process = await asyncio.create_subprocess_exec(

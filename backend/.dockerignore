@@ -1,0 +1,29 @@
+# Local-only artifacts that should not bloat the Docker image
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+.env
+.env.local
+.env.*.local
+
+# Runtime working directories (recreated by container)
+temp/
+logs/
+uploads/
+exports/
+test_media/
+
+# Reports and local docs
+tests/test_report.json
+*.log
+*.tmp
+
+# IDE
+.vscode/
+.idea/
