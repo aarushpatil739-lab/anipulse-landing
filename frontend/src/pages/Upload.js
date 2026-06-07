@@ -33,6 +33,7 @@ const Upload = () => {
   // Render-format state
   const [aspectRatio, setAspectRatio] = useState('16:9');
   const [verticalMode, setVerticalMode] = useState('blurred');
+  const [preset, setPreset] = useState('cinematic');
 
   // Create upload session on mount
   useEffect(() => {
@@ -205,7 +206,7 @@ const Upload = () => {
         },
         body: JSON.stringify({
           session_id: sessionId,
-          style: 'amv_default',
+          style: preset,
           max_duration: 180.0,
           aspect_ratio: aspectRatio,
           vertical_mode: verticalMode,
@@ -450,6 +451,8 @@ const Upload = () => {
         {sessionId && (
           <div className="mb-8">
             <RenderSettings
+              preset={preset}
+              onPresetChange={setPreset}
               aspectRatio={aspectRatio}
               onAspectRatioChange={setAspectRatio}
               verticalMode={verticalMode}

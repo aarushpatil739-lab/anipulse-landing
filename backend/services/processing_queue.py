@@ -132,7 +132,16 @@ class ProcessingQueue:
         if not job:
             logger.error(f"Job {job_id} not found")
             return
-        
+
+        # Surface a friendly "we picked up your render" message immediately
+        # so the UI never looks frozen between enqueue and stage 1.
+        job.update_progress(
+            JobStatus.QUEUED,
+            2.0,
+            "Render worker is warming up\u2026",
+        )
+        await self.job_service.update_job(job)
+
         try:
             # Pre-flight: ensure FFmpeg toolchain is available before doing any
             # of the heavy stages. If missing, fail fast with a clear,
@@ -159,7 +168,7 @@ class ProcessingQueue:
             await self._stage_render(job)
             
             # Stage 4: Completed (100%)
-            job.update_progress(JobStatus.COMPLETED, 100.0, "Completed")
+            job.update_progress(JobStatus.COMPLETED, 100.0, "Export ready \u2014 enjoy")
             
             elapsed_ms = (time.time() - start_time) * 1000
             job.timings.total_ms = elapsed_ms
@@ -190,7 +199,11 @@ class ProcessingQueue:
         logger.info(f"[{job.job_id}] Stage 1: Analyzing audio...")
         stage_start = time.time()
         
-        job.update_progress(JobStatus.ANALYZING_AUDIO, 5.0, "Analyzing audio")
+        job.update_progress(
+            JobStatus.ANALYZING_AUDIO,
+            8.0,
+            "Listening to your track — detecting BPM and beats…",
+        )
         await self.job_service.update_job(job)
         
         # Get audio file path
@@ -205,8 +218,14 @@ class ProcessingQueue:
         # Store analysis in job
         job.audio_analysis = AudioAnalysisResult(**analysis_result)
         
-        # Update progress
-        job.update_progress(JobStatus.ANALYZING_AUDIO, 25.0, "Audio analysis complete")
+        # Update progress with a teaser of what we found
+        bpm_round = round(analysis_result["bpm"]) if analysis_result.get("bpm") else 0
+        drops = len(analysis_result.get("drops") or [])
+        job.update_progress(
+            JobStatus.ANALYZING_AUDIO,
+            25.0,
+            f"Track locked at {bpm_round} BPM · {drops} drop{'s' if drops != 1 else ''}",
+        )
         job.timings.analyzing_audio_ms = (time.time() - stage_start) * 1000
         await self.job_service.update_job(job)
         
@@ -222,7 +241,11 @@ class ProcessingQueue:
         logger.info(f"[{job.job_id}] Stage 2: Generating timeline...")
         stage_start = time.time()
         
-        job.update_progress(JobStatus.GENERATING_TIMELINE, 30.0, "Generating timeline")
+        job.update_progress(
+            JobStatus.GENERATING_TIMELINE,
+            30.0,
+            "Drafting your edit — choosing clips and pacing to the beat…",
+        )
         await self.job_service.update_job(job)
         
         if not job.audio_analysis:
@@ -250,7 +273,12 @@ class ProcessingQueue:
         job.timeline_log = str(log_path)
         
         # Update progress
-        job.update_progress(JobStatus.GENERATING_TIMELINE, 45.0, "Timeline generation complete")
+        seg_count = len(timeline.segments)
+        job.update_progress(
+            JobStatus.GENERATING_TIMELINE,
+            45.0,
+            f"Edit drafted · {seg_count} cuts · {timeline.transition_count} transitions",
+        )
         job.timings.generating_timeline_ms = (time.time() - stage_start) * 1000
         await self.job_service.update_job(job)
         
@@ -267,7 +295,11 @@ class ProcessingQueue:
         logger.info(f"[{job.job_id}] Stage 3: Rendering final video...")
         stage_start = time.time()
         
-        job.update_progress(JobStatus.RENDERING, 50.0, "Rendering video")
+        job.update_progress(
+            JobStatus.RENDERING,
+            50.0,
+            "Trimming clips, syncing transitions to beats…",
+        )
         await self.job_service.update_job(job)
         
         if not job.timeline:
@@ -311,7 +343,12 @@ class ProcessingQueue:
         job.ffmpeg_logs = [m['trace_id'] for m in ffmpeg_metrics]
         
         # Update progress
-        job.update_progress(JobStatus.RENDERING, 95.0, "Rendering complete")
+        size_mb = export.size_bytes / (1024 * 1024)
+        job.update_progress(
+            JobStatus.RENDERING,
+            95.0,
+            f"Final encode complete · {size_mb:.1f} MB · finalising for download",
+        )
         job.timings.rendering_ms = (time.time() - stage_start) * 1000
         await self.job_service.update_job(job)
         

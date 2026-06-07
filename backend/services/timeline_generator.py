@@ -48,11 +48,25 @@ class TimelineGenerator:
         self.audio_analysis = audio_analysis
         self.max_duration = min(max_duration, audio_analysis['duration'])
         self.style = style
-        
-        # Initialize engines
+
+        # Map the legacy "style" string to one of our 5 named presets so
+        # the pacing engine can apply preset-specific density and speed.
+        # Anything we don't recognise falls back to 'cinematic'.
+        preset = style or "cinematic"
+        if preset == "amv_default":
+            preset = "cinematic"
+
+        # Pre-compute clip stats so the pacing engine can adapt to a
+        # small clip library (longer cuts when there are only 3 clips).
+        clip_count = len(clips_metadata)
+        total_clip_dur = sum(c.get("duration", 0.0) for c in clips_metadata)
+
         self.pacing = PacingEngine(
             bpm=audio_analysis['bpm'],
-            audio_duration=audio_analysis['duration']
+            audio_duration=audio_analysis['duration'],
+            clip_count=clip_count,
+            total_clip_duration=total_clip_dur,
+            preset=preset,
         )
         
         # Convert clip metadata to ClipMetadata objects
@@ -190,21 +204,23 @@ class TimelineGenerator:
                     actual_duration = MIN_SEGMENT_DURATION
                 else:
                     # Can't extend, skip this segment
-                    logger.warning(f"Cannot extend segment, skipping")
+                    logger.warning("Cannot extend segment, skipping")
                     beat_idx += 1
                     continue
             
-            # Select transition and effect
+            # Select transition and effect (density-controlled, position-aware)
             transition = self.pacing.select_transition(
                 energy_level,
                 is_drop=is_drop,
-                prev_transition=prev_transition
+                prev_transition=prev_transition,
+                position=self.current_timeline_pos,
             )
-            
+
             effect = self.pacing.select_effect(
                 energy_level,
                 is_drop=is_drop,
-                cut_duration=cut_duration
+                cut_duration=cut_duration,
+                position=self.current_timeline_pos,
             )
             
             # Create segment
@@ -235,7 +251,9 @@ class TimelineGenerator:
             if transition != TransitionType.NONE:
                 transition_count += 1
                 prev_transition = transition
-            
+                # Tell the pacing engine so future density checks see it.
+                self.pacing.record_transition(self.current_timeline_pos)
+
             if effect != EffectType.NONE:
                 effect_count += 1
             

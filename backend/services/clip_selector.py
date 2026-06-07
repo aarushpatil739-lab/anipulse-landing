@@ -130,28 +130,49 @@ class ClipSelector:
             Tuple of (clip_index, source_start, source_end) or None if no suitable clip
         """
         # Filter clips that are available (not in cooldown and have sufficient duration)
-        available_clips = []
-        
-        for clip in self.clips:
-            usage = self.usage_tracker[clip.index]
-            
-            # Check cooldown
-            if not usage.can_use(current_timeline_pos, cooldown):
-                continue
-            
-            # Check duration
-            if clip.duration < required_duration:
-                continue
-            
-            available_clips.append(clip)
-        
+        # We try with the requested cooldown first; if that leaves zero
+        # candidates, we progressively halve the cooldown until at least
+        # one clip qualifies.  Result: no more "No available clips" warnings.
+        attempts = [cooldown, cooldown / 2.0, cooldown / 4.0, 0.0]
+        available_clips: List[ClipMetadata] = []
+        used_cooldown = cooldown
+        for c in attempts:
+            cand = []
+            for clip in self.clips:
+                usage = self.usage_tracker[clip.index]
+                if not usage.can_use(current_timeline_pos, c):
+                    continue
+                if clip.duration < required_duration:
+                    continue
+                cand.append(clip)
+            if cand:
+                available_clips = cand
+                used_cooldown = c
+                break
+
         if not available_clips:
-            logger.warning(f"No available clips for timeline_pos={current_timeline_pos:.2f}s, energy={energy_level}")
-            # Fallback: reset cooldowns and try again with most used clip
-            if self.clips:
-                least_used = min(self.clips, key=lambda c: self.usage_tracker[c.index].total_uses)
-                return self._select_segment_from_clip(least_used, required_duration)
-            return None
+            # Even with cooldown=0 we got nothing -- that means every clip
+            # is shorter than required_duration.  Pick the longest clip
+            # and force-fit (the caller will trim its end_time to the
+            # clip duration on the way out).
+            logger.warning(
+                "All clips shorter than required_duration=%.2fs at "
+                "timeline_pos=%.2fs; picking longest clip as fallback.",
+                required_duration,
+                current_timeline_pos,
+            )
+            longest = max(self.clips, key=lambda c: c.duration)
+            return (longest.index, 0.0, min(required_duration, longest.duration))
+
+        if used_cooldown < cooldown:
+            logger.debug(
+                "Relaxed cooldown %.2fs->%.2fs at timeline_pos=%.2fs "
+                "(found %d candidates)",
+                cooldown,
+                used_cooldown,
+                current_timeline_pos,
+                len(available_clips),
+            )
         
         # Calculate weights based on energy level and usage
         weights = []

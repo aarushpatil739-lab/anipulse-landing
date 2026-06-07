@@ -1,0 +1,12 @@
+{
+  "short_name": "AniPulse",
+  "name": "AniPulse — AI Anime Music Video Editor",
+  "description": "Upload anime clips and a track. Get beat-synced AMVs for TikTok, Reels and YouTube Shorts.",
+  "icons": [],
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b0118",
+  "theme_color": "#9333ea",
+  "categories": ["video", "entertainment", "productivity"]
+}
