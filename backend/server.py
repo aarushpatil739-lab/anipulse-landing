@@ -222,6 +222,19 @@ class GenerateRequest(BaseModel):
     session_id: str = Field(..., description="Upload session ID")
     style: str = Field("amv_default", description="Generation style")
     max_duration: float = Field(180.0, description="Maximum output duration in seconds")
+    aspect_ratio: str = Field(
+        "16:9",
+        description="Output aspect ratio. One of: 16:9, 9:16, 1:1",
+    )
+    vertical_mode: str = Field(
+        "blurred",
+        description=(
+            "How to fit a 16:9 source into 9:16 (or 1:1). "
+            "'blurred' (TikTok-style blurred background, recommended) or "
+            "'crop' (center-crop, may cut content). "
+            "Ignored when aspect_ratio is 16:9."
+        ),
+    )
 
 @api_router.post("/generate")
 async def generate_amv(request: GenerateRequest):
@@ -293,6 +306,16 @@ async def generate_amv(request: GenerateRequest):
             audio=audio_metadata,
             style=request.style
         )
+
+        # Stash render-format options on the job so the worker can read
+        # them.  These persist via MongoDB alongside the rest of the job.
+        job.input_audio = job.input_audio or {}
+        job.input_audio["__render_opts"] = {
+            "aspect_ratio": request.aspect_ratio,
+            "vertical_mode": request.vertical_mode,
+            "max_duration": request.max_duration,
+        }
+        await generation_job_service.update_job(job)
         
         # Enqueue job
         if processing_queue:
@@ -415,6 +438,177 @@ async def get_queue_stats():
         logger.error(f"Error getting queue stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+
+# ========== AUDIO & VIDEO ANALYSIS ENDPOINTS ==========
+
+from services.audio_analyzer import AudioAnalyzer
+from services.scene_analyzer import SceneAnalyzer, is_available as scene_pyav_available
+
+# Reusable analyzer instances (cheap to construct, no shared state issues)
+_audio_analyzer = AudioAnalyzer()
+_scene_analyzer = SceneAnalyzer(analysis_fps=6)
+
+
+class AudioBeatsRequest(BaseModel):
+    """Run beat / BPM / drop analysis on an already-uploaded audio file."""
+
+    session_id: Optional[str] = Field(
+        None,
+        description="Upload session ID. Resolves the session's audio file.",
+    )
+    audio_path: Optional[str] = Field(
+        None,
+        description=(
+            "Direct path to an audio file already on the backend filesystem "
+            "(advanced: for internal debugging only)."
+        ),
+    )
+
+
+def _audio_summary(analysis: Dict, beat_count_in_payload: int = 256) -> Dict:
+    """Trim the full analysis result down to a frontend-friendly payload.
+
+    The raw `energy_curve` can be thousands of points -- we down-sample
+    to keep the response under ~50 KB so it's snappy in the UI.
+    """
+    beats: List[float] = analysis.get("beats", []) or []
+    drops: List[float] = analysis.get("drops", []) or []
+    sections = analysis.get("sections", []) or []
+    energy_curve = analysis.get("energy_curve", []) or []
+
+    # Down-sample energy curve to at most ~600 points for the timeline UI.
+    if len(energy_curve) > 600:
+        step = max(1, len(energy_curve) // 600)
+        energy_curve = energy_curve[::step]
+
+    bpm = float(analysis.get("bpm", 0.0))
+    duration = float(analysis.get("duration", 0.0))
+
+    # Build a uniform "beat grid" so the frontend can render bar lines
+    # even on tracks where librosa's onset detection drops beats around
+    # silence.  Grid spans 0..duration at the detected BPM.
+    beat_period = 60.0 / bpm if bpm > 1 else 0.5
+    grid: List[float] = []
+    t = beats[0] if beats else 0.0
+    while t <= duration and len(grid) < 8192:
+        grid.append(round(t, 4))
+        t += beat_period
+
+    return {
+        "bpm": bpm,
+        "duration_seconds": duration,
+        "beat_count": len(beats),
+        "drop_count": len(drops),
+        "beats": [round(b, 4) for b in beats[:beat_count_in_payload]],
+        "drops": [round(d, 4) for d in drops],
+        "beat_grid": grid,
+        "energy_curve": energy_curve,
+        "sections": sections,
+        "beat_period_seconds": beat_period,
+    }
+
+
+@api_router.post("/audio/beats")
+async def detect_audio_beats(req: AudioBeatsRequest):
+    """
+    Beat / BPM / drop detection for an uploaded audio track.
+
+    Returns BPM, raw beat timestamps, a uniform beat-grid (useful for
+    rendering bar lines in a timeline UI), drop timestamps, the energy
+    curve and detected high/low energy sections.
+    """
+    if not req.session_id and not req.audio_path:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide either 'session_id' or 'audio_path'.",
+        )
+
+    audio_path: Optional[str] = req.audio_path
+    if req.session_id:
+        sess = await upload_service.get_session(req.session_id)
+        if not sess:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if not sess.audio:
+            raise HTTPException(
+                status_code=400,
+                detail="Session has no audio file uploaded yet.",
+            )
+        audio_path = f"/app/backend/uploads/{sess.audio.storage_key}"
+
+    if not audio_path or not Path(audio_path).exists():
+        raise HTTPException(status_code=404, detail=f"Audio file not found: {audio_path}")
+
+    try:
+        analysis = await _audio_analyzer.analyze(audio_path)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Beat detection failed")
+        raise HTTPException(status_code=500, detail=f"Beat detection failed: {exc}")
+
+    return {
+        "success": True,
+        "audio_path": audio_path,
+        **_audio_summary(analysis),
+    }
+
+
+class VideoAnalyzeRequest(BaseModel):
+    """Run scene / motion / intensity analysis on uploaded video clips."""
+
+    session_id: Optional[str] = Field(
+        None,
+        description="Upload session ID. Analyzes all video clips in the session.",
+    )
+    video_paths: Optional[List[str]] = Field(
+        None,
+        description="Direct list of video file paths to analyze (advanced).",
+    )
+
+
+@api_router.post("/video/analyze")
+async def analyze_video_clips(req: VideoAnalyzeRequest):
+    """
+    Scene / motion / intensity analysis for each uploaded video clip.
+
+    Returns per-clip motion_score, intensity_score, score_1_to_10,
+    scene-cut timestamps and action/calm sub-segments.  Used by the
+    smart clip selector during generation, and exposed here so the
+    frontend can show "intensity bars" beneath each clip thumbnail.
+    """
+    if not scene_pyav_available():
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "pyav_unavailable",
+                "message": (
+                    "PyAV is not installed in this runtime; scene analysis is "
+                    "unavailable. Add 'av' to backend/requirements.txt."
+                ),
+            },
+        )
+
+    paths: List[str] = []
+    if req.video_paths:
+        paths.extend(req.video_paths)
+    if req.session_id:
+        sess = await upload_service.get_session(req.session_id)
+        if not sess:
+            raise HTTPException(status_code=404, detail="Session not found")
+        for v in sess.videos:
+            paths.append(f"/app/backend/uploads/{v.storage_key}")
+
+    if not paths:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide 'session_id' (recommended) or 'video_paths'.",
+        )
+
+    results = _scene_analyzer.analyze_many(paths)
+    return {
+        "success": True,
+        "clip_count": len(results),
+        "clips": [r.to_dict() for r in results],
+    }
 
 
 # ========== FFMPEG TEST ENDPOINTS ==========

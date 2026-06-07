@@ -22,6 +22,7 @@ numpy==1.26.4
 
 # Video Processing
 ffmpeg-python==0.2.0
+av>=12.0.0,<14.0.0
 
 # Image Processing (for thumbnails)
 Pillow==10.3.0

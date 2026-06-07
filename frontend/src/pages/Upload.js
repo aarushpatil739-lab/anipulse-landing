@@ -6,10 +6,14 @@ import { Container } from '../components/ui/Container';
 import { Button } from '../components/ui/Button';
 import UploadDropzone from '../components/upload/UploadDropzone';
 import FileCard from '../components/upload/FileCard';
+import BeatTimeline from '../components/upload/BeatTimeline';
+import RenderSettings from '../components/upload/RenderSettings';
+import ClipIntensityStrip from '../components/upload/ClipIntensityStrip';
 import { uploadAPI, validation } from '../services/uploadService';
 
 const Upload = () => {
   const navigate = useNavigate();
+  const backendUrl = process.env.REACT_APP_BACKEND_URL;
   const [sessionId, setSessionId] = useState(null);
   const [videos, setVideos] = useState([]);
   const [audio, setAudio] = useState(null);
@@ -20,11 +24,15 @@ const Upload = () => {
   
   // Generation state
   const [jobId, setJobId] = useState(null);
-  const [generationStatus, setGenerationStatus] = useState(null); // 'queued', 'analyzing_audio', 'generating_timeline', 'rendering', 'completed', 'failed'
+  const [generationStatus, setGenerationStatus] = useState(null);
   const [generationProgress, setGenerationProgress] = useState(0);
   const [generationStage, setGenerationStage] = useState('');
   const [generationError, setGenerationError] = useState(null);
   const [downloadUrl, setDownloadUrl] = useState(null);
+
+  // Render-format state
+  const [aspectRatio, setAspectRatio] = useState('16:9');
+  const [verticalMode, setVerticalMode] = useState('blurred');
 
   // Create upload session on mount
   useEffect(() => {
@@ -190,7 +198,7 @@ const Upload = () => {
     
     try {
       // Start generation
-      const response = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/generate`, {
+      const response = await fetch(`${backendUrl}/api/generate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -198,7 +206,9 @@ const Upload = () => {
         body: JSON.stringify({
           session_id: sessionId,
           style: 'amv_default',
-          max_duration: 180.0
+          max_duration: 180.0,
+          aspect_ratio: aspectRatio,
+          vertical_mode: verticalMode,
         })
       });
       
@@ -224,7 +234,7 @@ const Upload = () => {
   const pollGenerationStatus = async (jobId) => {
     const pollInterval = setInterval(async () => {
       try {
-        const response = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/generate/${jobId}/status`);
+        const response = await fetch(`${backendUrl}/api/generate/${jobId}/status`);
         const data = await response.json();
         
         if (data.success) {
@@ -236,7 +246,7 @@ const Upload = () => {
           if (data.status === 'completed') {
             clearInterval(pollInterval);
             setIsProcessing(false);
-            setDownloadUrl(`${process.env.REACT_APP_BACKEND_URL}/api/generate/${jobId}/download`);
+            setDownloadUrl(`${backendUrl}/api/generate/${jobId}/download`);
           } else if (data.status === 'failed') {
             clearInterval(pollInterval);
             setIsProcessing(false);
@@ -416,6 +426,39 @@ const Upload = () => {
           </div>
         </motion.div>
 
+        {/* AI insights: beat timeline + clip intensity (visible once
+            audio/videos are uploaded; harmless before that). */}
+        {audio && !audio.uploading && (
+          <div className="mb-8">
+            <BeatTimeline
+              sessionId={sessionId}
+              backendUrl={backendUrl}
+            />
+          </div>
+        )}
+
+        {uploadedVideos.length > 0 && (
+          <div className="mb-8">
+            <ClipIntensityStrip
+              sessionId={sessionId}
+              backendUrl={backendUrl}
+            />
+          </div>
+        )}
+
+        {/* Render-format selector (always visible once a session exists) */}
+        {sessionId && (
+          <div className="mb-8">
+            <RenderSettings
+              aspectRatio={aspectRatio}
+              onAspectRatioChange={setAspectRatio}
+              verticalMode={verticalMode}
+              onVerticalModeChange={setVerticalMode}
+              disabled={isProcessing}
+            />
+          </div>
+        )}
+
         {/* Generation Progress UI */}
         {isProcessing && jobId && (
           <motion.div
@@ -486,6 +529,7 @@ const Upload = () => {
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             className="glass-effect rounded-2xl p-8 border border-green-500/50 mb-8 bg-gradient-to-br from-green-500/10 to-blue-500/10 text-center"
+            data-testid="generation-success"
           >
             <motion.div
               initial={{ scale: 0 }}
@@ -497,9 +541,28 @@ const Upload = () => {
             <h3 className="text-3xl font-bold text-white mb-2">Your AMV is Ready!</h3>
             <p className="text-gray-300 mb-2">AI-generated beat-synced anime music video</p>
             <p className="text-sm text-gray-400 mb-6">
-              Analyzing music • Syncing beats • Applying effects • Rendering complete
+              {aspectRatio} {aspectRatio !== '16:9' ? `· ${verticalMode}` : ''} · 720p · H.264 · beat-synced
             </p>
-            
+
+            {/* Inline preview player so the creator can scrub before download */}
+            <div
+              className={`mx-auto rounded-xl overflow-hidden border border-white/10 bg-black mb-6 ${
+                aspectRatio === '9:16'
+                  ? 'w-[270px] h-[480px]'
+                  : aspectRatio === '1:1'
+                  ? 'w-[360px] h-[360px]'
+                  : 'w-full max-w-[720px] aspect-video'
+              }`}
+              data-testid="result-preview"
+            >
+              <video
+                src={downloadUrl}
+                controls
+                playsInline
+                className="w-full h-full object-contain bg-black"
+              />
+            </div>
+
             <Button
               variant="primary"
               size="lg"
@@ -507,14 +570,11 @@ const Upload = () => {
                 window.location.href = downloadUrl;
               }}
               className="text-xl px-12 py-4 mb-4"
+              data-testid="download-amv-btn"
             >
-              <span className="mr-2">⬇️</span>
+              <span className="mr-2">⬇</span>
               Download AMV
             </Button>
-            
-            <p className="text-xs text-gray-500">
-              H.264 video • 1080p • Beat-synced
-            </p>
           </motion.div>
         )}
 

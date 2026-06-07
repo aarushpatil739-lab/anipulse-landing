@@ -97,7 +97,32 @@ class TimelineGenerator:
         beats = self.audio_analysis['beats']
         drops = self.audio_analysis['drops']
         energy_sections = self.audio_analysis['sections']
-        
+
+        # Robustness: librosa sometimes returns very few onset-detected
+        # beats for sparse or low-percussion tracks (we've seen beats=2
+        # on 16s tracks).  When that happens, fall back to a uniform
+        # BPM-derived beat grid spanning the full audio so the timeline
+        # generator can still produce a full-length AMV.
+        bpm = float(self.audio_analysis.get('bpm', 0) or 0)
+        audio_dur = float(self.audio_analysis.get('duration', 0) or self.max_duration)
+        if bpm > 1.0 and audio_dur > 0:
+            expected_beats = max(8, int(audio_dur * bpm / 60.0))
+            if len(beats) < max(8, expected_beats // 2):
+                period = 60.0 / bpm
+                grid = []
+                # Anchor grid on first detected beat if any, else 0
+                t = beats[0] if beats else 0.0
+                while t < audio_dur and len(grid) < 4096:
+                    grid.append(round(t, 4))
+                    t += period
+                logger.warning(
+                    "Sparse beats detected (got %d, expected ~%d). "
+                    "Falling back to uniform BPM grid with %d beats at "
+                    "period=%.3fs.",
+                    len(beats), expected_beats, len(grid), period,
+                )
+                beats = grid
+
         if not beats:
             raise ValueError("No beats detected in audio analysis")
         

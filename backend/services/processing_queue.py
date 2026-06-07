@@ -279,7 +279,12 @@ class ProcessingQueue:
         # Initialize render service
         render_service = RenderService(job.job_id)
         
-        # Render video.
+        # Read render-format options from the job (set by /api/generate).
+        # Defaults fall back to env vars so we keep the existing behaviour.
+        render_opts = (job.input_audio or {}).get("__render_opts") or {}
+        aspect_ratio = render_opts.get("aspect_ratio") or "16:9"
+        vertical_mode = render_opts.get("vertical_mode") or "blurred"
+
         # NOTE on resolution: we use 720p by default because the Railway
         # trial plan caps the container at ~512MB RAM.  A 1080p libx264
         # encode of a ~3-minute AMV peaks above that budget and the kernel
@@ -294,6 +299,8 @@ class ProcessingQueue:
             resolution=target_resolution,
             fps=30,
             quality=target_quality,
+            aspect_ratio=aspect_ratio,
+            vertical_mode=vertical_mode,
         )
         
         # Store export info in job

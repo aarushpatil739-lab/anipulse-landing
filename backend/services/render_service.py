@@ -61,7 +61,9 @@ class RenderService:
         audio_path: str,
         resolution: str = "1080p",
         fps: int = 30,
-        quality: str = "balanced"
+        quality: str = "balanced",
+        aspect_ratio: str = "16:9",
+        vertical_mode: str = "blurred",
     ) -> ExportResult:
         """
         Render complete AMV from timeline
@@ -72,11 +74,16 @@ class RenderService:
             resolution: Target resolution (1080p, 720p)
             fps: Target FPS
             quality: Quality preset (high, balanced, fast)
+            aspect_ratio: Output aspect ratio (16:9, 9:16, 1:1)
+            vertical_mode: How to fit 16:9 source into 9:16/1:1 ("blurred" or "crop")
             
         Returns:
             ExportResult with final video metadata
         """
-        logger.info(f"Starting render: {len(timeline.segments)} segments, {timeline.total_duration:.2f}s")
+        logger.info(
+            f"Starting render: {len(timeline.segments)} segments, "
+            f"{timeline.total_duration:.2f}s, aspect={aspect_ratio} ({vertical_mode})"
+        )
         start_time = time.time()
         
         try:
@@ -99,7 +106,9 @@ class RenderService:
                 final_path,
                 resolution=resolution,
                 fps=fps,
-                quality=quality
+                quality=quality,
+                aspect_ratio=aspect_ratio,
+                vertical_mode=vertical_mode,
             )
             
             # Step 5: Validate output
@@ -268,7 +277,13 @@ class RenderService:
             return processed_segments[0]
         
         # SAFETY: Validate segment durations before attempting transitions
-        MIN_DURATION_FOR_TRANSITION = 0.4  # 400ms minimum to safely apply transitions
+        # Minimum segment duration to safely apply transitions.  AMV
+        # pacing on a fast BPM often yields 0.5s segments; trying to xfade
+        # those is both slow (xfade is O(overlap*resolution)) and creates
+        # visual mush.  Raising the threshold to 0.8s means very short
+        # segments use hard cuts -- which is the actual AMV aesthetic on
+        # high-energy passages anyway.
+        MIN_DURATION_FOR_TRANSITION = 0.8
         
         # Apply transitions between consecutive segments with safety checks
         transitioned_segments = []
@@ -331,12 +346,39 @@ class RenderService:
                     # No transition, just add current segment
                     transitioned_segments.append(curr_seg)
         
-        # Concatenate all segments
-        logger.info(f"Concatenating {len(transitioned_segments)} segments...")
+        # Concatenate all segments.
+        # Defensive: drop any segment that has no decodable video (a
+        # 0-duration trim or a corrupt intermediate file would cause the
+        # concat filter to fail with 'matches no streams').
+        valid_segments: List[str] = []
+        for seg in transitioned_segments:
+            try:
+                meta = await self.ffmpeg.probe(seg)
+                if meta.get("duration", 0.0) >= 0.05 and meta.get("width", 0) > 0:
+                    valid_segments.append(seg)
+                else:
+                    logger.warning(
+                        f"Dropping unusable segment before concat: {seg} "
+                        f"(duration={meta.get('duration')}, "
+                        f"{meta.get('width')}x{meta.get('height')})"
+                    )
+            except Exception as exc:
+                logger.warning(f"Dropping unprobeable segment {seg}: {exc}")
+
+        if not valid_segments:
+            raise FFmpegError(
+                "All segments were invalid -- nothing to concatenate. "
+                "This usually means the timeline produced 0-duration trims."
+            )
+
+        logger.info(
+            f"Concatenating {len(valid_segments)} valid segments "
+            f"(dropped {len(transitioned_segments) - len(valid_segments)})..."
+        )
         output_path = str(self.work_dir / "merged_video.mp4")
         
         merged = await self.ffmpeg.concatenate(
-            transitioned_segments,
+            valid_segments,
             output_path
         )
         self.intermediate_files.append(merged)

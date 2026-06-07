@@ -357,25 +357,28 @@ class FFmpegUtils:
     ) -> str:
         """
         Concatenate using the FFmpeg `concat` filter -- re-encodes every
-        input to a normalised h.264/aac MP4 so mismatched source codecs,
+        input to a normalised h.264 MP4 so mismatched source codecs,
         resolutions or framerates are handled transparently.
+
+        Video-only by design: the upstream pipeline merges the music
+        track in a later stage, so any audio in the trimmed segments is
+        ignored here.  This sidesteps the "matches no streams" error
+        when individual clips lack an audio track.
         """
         target_w, target_h, target_fps = 1280, 720, 30
         n = len(video_paths)
 
-        # Build per-input filter chain: scale + pad to target res, then fps.
-        # The concat filter then joins n streams into one v+a output.
+        # Per-input chain: scale + pad to target res, then fps. No audio.
         filter_parts = []
         for i in range(n):
             filter_parts.append(
                 f"[{i}:v]scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
                 f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,"
                 f"fps={target_fps},setsar=1[v{i}];"
-                f"[{i}:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo[a{i}];"
             )
-        concat_inputs = "".join(f"[v{i}][a{i}]" for i in range(n))
+        concat_inputs = "".join(f"[v{i}]" for i in range(n))
         filter_complex = (
-            "".join(filter_parts) + f"{concat_inputs}concat=n={n}:v=1:a=1[outv][outa]"
+            "".join(filter_parts) + f"{concat_inputs}concat=n={n}:v=1:a=0[outv]"
         )
 
         cmd = ["ffmpeg"]
@@ -384,15 +387,12 @@ class FFmpegUtils:
         cmd += [
             "-filter_complex", filter_complex,
             "-map", "[outv]",
-            "-map", "[outa]",
+            "-an",  # silence any audio mapping
             "-c:v", "libx264",
             "-preset", "ultrafast",
             "-crf", "26",
             "-x264opts", "rc-lookahead=10:ref=2",
             "-threads", "2",
-            "-c:a", "aac",
-            "-b:a", "128k",
-            "-ar", "44100",
             "-y",
             output_path,
         ]
@@ -564,15 +564,21 @@ class FFmpegUtils:
                 '-i', clip2_path,
                 '-filter_complex', filter_complex,
                 '-c:v', 'libx264',
-                '-preset', 'fast',
-                '-crf', '23',
+                '-preset', 'ultrafast',
+                '-crf', '26',
+                '-threads', '2',
                 '-y',
                 output_path
             ]
             
             await self._run_command(
                 cmd,
-                timeout=180,
+                # 30s is generous: a typical xfade between two ~1s 720p
+                # clips finishes in <1.5s on the Railway trial.  If we hit
+                # 30s something is wrong and the caller's safe-fallback
+                # should kick in immediately rather than blocking the
+                # whole render for 3 minutes.
+                timeout=30,
                 operation="apply_transition",
                 input_files=[clip1_path, clip2_path],
                 output_file=output_path
@@ -754,9 +760,11 @@ class FFmpegUtils:
     
     async def export_final(self, input_path: str, output_path: str,
                           resolution: str = "1080p", fps: int = 30,
-                          quality: str = "balanced") -> str:
+                          quality: str = "balanced",
+                          aspect_ratio: str = "16:9",
+                          vertical_mode: str = "blurred") -> str:
         """
-        Export final video with optimized settings
+        Export final video with optimized settings + aspect-ratio fit.
         
         Args:
             input_path: Input video
@@ -764,19 +772,33 @@ class FFmpegUtils:
             resolution: Target resolution (1080p, 720p)
             fps: Target FPS
             quality: Quality preset (high, balanced, fast)
+            aspect_ratio: 16:9 | 9:16 | 1:1
+            vertical_mode: 'blurred' (TikTok-style blurred bg) or 'crop'
+                (center-crop, may lose edges). Used only when the source
+                aspect doesn't match the target.
             
         Returns:
             Path to exported video
         """
         try:
-            logger.info(f"Exporting final video: {resolution} @ {fps}fps, quality={quality}")
-            
-            # Resolution mapping
-            res_map = {
-                "1080p": "1920:1080",
-                "720p": "1280:720"
+            logger.info(
+                f"Exporting final video: {resolution} @ {fps}fps, "
+                f"quality={quality}, aspect={aspect_ratio} ({vertical_mode})"
+            )
+
+            # Target W/H based on resolution + aspect ratio
+            # We keep the *short* side bounded by the resolution tier so we
+            # don't accidentally produce a 1080x1920 file when on a 720p tier.
+            res_short = 720 if resolution == "720p" else 1080
+            ar_map = {
+                "16:9": (round(res_short * 16 / 9 / 2) * 2, res_short),
+                "9:16": (res_short, round(res_short * 16 / 9 / 2) * 2),
+                "1:1":  (res_short, res_short),
             }
-            scale = res_map.get(resolution, "1920:1080")
+            target_w, target_h = ar_map.get(aspect_ratio, ar_map["16:9"])
+
+            # Build the video filter graph
+            vf = self._build_aspect_filter(target_w, target_h, fps, vertical_mode)
             
             # Quality preset mapping. `ultrafast` keeps RAM usage low which
             # matters on small containers (Railway trial = 512MB).
@@ -790,7 +812,7 @@ class FFmpegUtils:
             cmd = [
                 'ffmpeg',
                 '-i', input_path,
-                '-vf', f"scale={scale}:force_original_aspect_ratio=decrease,pad={scale}:(ow-iw)/2:(oh-ih)/2,fps={fps}",
+                '-vf', vf,
                 '-c:v', 'libx264',
                 '-preset', settings['preset'],
                 '-crf', str(settings['crf']),
@@ -833,6 +855,60 @@ class FFmpegUtils:
             logger.error(f"Export failed: {e}")
             raise FFmpegError(f"Failed to export video: {e}")
     
+    def _build_aspect_filter(
+        self,
+        target_w: int,
+        target_h: int,
+        fps: int,
+        vertical_mode: str,
+    ) -> str:
+        """
+        Build the FFmpeg -vf graph that fits arbitrary source dimensions
+        into the target frame.
+
+        - "crop"   : zoom-to-fill (cover) then center-crop. Loses content
+                     on the edges but keeps the subject sharp.
+        - "blurred": TikTok-style. Two layers:
+                       1. A blurred copy scaled to FILL the target frame.
+                       2. The original, scale-to-FIT (letterbox-style),
+                          overlaid centered on top of the blur.
+                     Used by default for vertical/square targets so a
+                     16:9 source still looks intentional on 9:16.
+
+        For 16:9 targets we just letterbox/pad (no blur required).
+        """
+        # Square or vertical targets benefit from the blurred-bg treatment.
+        is_extreme = (target_w == target_h) or (target_h > target_w)
+
+        if not is_extreme or vertical_mode == "crop":
+            # Cover (scale-to-fill) + center crop  --or--  simple letterbox
+            # depending on which fits better.  For 16:9 we keep the original
+            # letterbox behaviour so we never lose any pixels.
+            if is_extreme and vertical_mode == "crop":
+                return (
+                    f"scale={target_w}:{target_h}:force_original_aspect_ratio=increase,"
+                    f"crop={target_w}:{target_h},"
+                    f"fps={fps}"
+                )
+            return (
+                f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
+                f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,"
+                f"fps={fps}"
+            )
+
+        # Blurred background mode (default for 9:16 / 1:1)
+        # Two filter chains, then overlay.  We split the input, blur+fill
+        # one copy, scale-to-fit the other, and overlay centered.
+        return (
+            "split=2[bg][fg];"
+            f"[bg]scale={target_w}:{target_h}:force_original_aspect_ratio=increase,"
+            f"crop={target_w}:{target_h},"
+            f"gblur=sigma=24[bgblur];"
+            f"[fg]scale={target_w}:{target_h}:force_original_aspect_ratio=decrease[fgscaled];"
+            "[bgblur][fgscaled]overlay=(W-w)/2:(H-h)/2:format=auto,"
+            f"fps={fps}"
+        )
+
     async def _run_command(self, cmd: List[str], timeout: int = 60,
                           operation: str = "ffmpeg_op",
                           input_files: Optional[List[str]] = None,
