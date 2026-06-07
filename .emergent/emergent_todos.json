@@ -1,54 +1,42 @@
 [
   {
-    "content": "Add /api/audio/beats endpoint (expose BPM + beats + drops + energy)",
+    "content": "Survey: pacing_engine, clip_selector, timeline_generator, branding refs",
     "status": "completed"
   },
   {
-    "content": "Build scene_analyzer.py using PyAV (motion, intensity, scene-cuts, 1-10 score)",
+    "content": "Wave A: Adaptive pacing - longer cuts when fewer clips + calm music",
     "status": "completed"
   },
   {
-    "content": "Add av to requirements.txt + verify Dockerfile compatibility",
+    "content": "Wave A: Smart clip reuse - relax cooldown when exhausted, no more 'No available clips'",
     "status": "completed"
   },
   {
-    "content": "Add /api/video/analyze endpoint",
+    "content": "Wave A: Safe segment validation - prevent 0x0 / 0-dur trims at source",
     "status": "completed"
   },
   {
-    "content": "Fix timeline-generator sparse-beats edge case (BPM-grid fallback)",
+    "content": "Wave A: Effect density controller - cap effects per minute, cooldown heavy effects",
     "status": "completed"
   },
   {
-    "content": "Lower per-transition timeout + raise MIN_DURATION_FOR_TRANSITION",
+    "content": "Wave B: Emotional editing - energy-driven pacing + transition selection (via preset)",
     "status": "completed"
   },
   {
-    "content": "Pre-concat segment validation (drop 0-duration/corrupt files)",
+    "content": "Wave C: Render UX - granular stage messages + warm-up + diagnostic teasers",
     "status": "completed"
   },
   {
-    "content": "Add aspect ratio export modes: 9:16, 1:1, 16:9 with smart-crop + blurred-bg",
+    "content": "Wave D: Edit presets UI (Phonk/Emotional/Cinematic/Velocity/Aggressive)",
     "status": "completed"
   },
   {
-    "content": "Inspect existing frontend (Upload.js) to plan timeline preview UI",
+    "content": "Wave D: Branding cleanup - remove Emergent refs, AniPulse meta",
     "status": "completed"
   },
   {
-    "content": "Frontend: aspect-ratio selector + render-mode selector in Upload.js",
-    "status": "completed"
-  },
-  {
-    "content": "Frontend: Timeline preview UI with beat markers + clip thumbnails",
-    "status": "completed"
-  },
-  {
-    "content": "Frontend: cyberpunk landing + result page polish (inline player, aspect-correct)",
-    "status": "completed"
-  },
-  {
-    "content": "Commit, push, verify production deploy + E2E",
+    "content": "Local E2E + production deploy + production multi-preset E2E verified",
     "status": "completed"
   }
 ]
