@@ -1,62 +1,54 @@
 [
   {
-    "content": "Inspect current Aptfile, verify_deps.py, ffmpeg_utils.py, railway.toml",
+    "content": "Add /api/audio/beats endpoint (expose BPM + beats + drops + energy)",
     "status": "completed"
   },
   {
-    "content": "Create Dockerfile with apt-installed ffmpeg + python deps",
+    "content": "Build scene_analyzer.py using PyAV (motion, intensity, scene-cuts, 1-10 score)",
     "status": "completed"
   },
   {
-    "content": "Update railway.json to use DOCKERFILE builder; reconcile railway.toml",
+    "content": "Add av to requirements.txt + verify Dockerfile compatibility",
     "status": "completed"
   },
   {
-    "content": "Add FFmpeg availability check + BinaryUnavailableError in ffmpeg_utils.py",
+    "content": "Add /api/video/analyze endpoint",
     "status": "completed"
   },
   {
-    "content": "Update verify_deps.py: write JSON status file, log paths + versions",
+    "content": "Fix timeline-generator sparse-beats edge case (BPM-grid fallback)",
     "status": "completed"
   },
   {
-    "content": "Update server.py /api/generate + test endpoints to return 503 if ffmpeg missing",
+    "content": "Lower per-transition timeout + raise MIN_DURATION_FOR_TRANSITION",
     "status": "completed"
   },
   {
-    "content": "Update processing_queue.py to mark jobs failed with clear message if ffmpeg missing",
+    "content": "Pre-concat segment validation (drop 0-duration/corrupt files)",
     "status": "completed"
   },
   {
-    "content": "Add /api/health/ffmpeg diagnostic endpoint",
+    "content": "Add aspect ratio export modes: 9:16, 1:1, 16:9 with smart-crop + blurred-bg",
     "status": "completed"
   },
   {
-    "content": "Add nixpacks.toml fallback for ffmpeg install (dual strategy)",
+    "content": "Inspect existing frontend (Upload.js) to plan timeline preview UI",
     "status": "completed"
   },
   {
-    "content": "Fix healthcheck: /health endpoint + 300s timeout + bounded MongoDB ping",
+    "content": "Frontend: aspect-ratio selector + render-mode selector in Upload.js",
     "status": "completed"
   },
   {
-    "content": "Introduce start.sh single source of truth for container startup",
+    "content": "Frontend: Timeline preview UI with beat markers + clip thumbnails",
     "status": "completed"
   },
   {
-    "content": "Graceful per-segment effect fallback so a single failing effect doesn't kill render",
+    "content": "Frontend: cyberpunk landing + result page polish (inline player, aspect-correct)",
     "status": "completed"
   },
   {
-    "content": "Bulletproof concatenate with concat-filter re-encode fallback",
-    "status": "completed"
-  },
-  {
-    "content": "Memory-bounded export for Railway 512MB trial cap",
-    "status": "completed"
-  },
-  {
-    "content": "Full E2E production test: upload, analyze, generate, render, download",
+    "content": "Commit, push, verify production deploy + E2E",
     "status": "completed"
   }
 ]
