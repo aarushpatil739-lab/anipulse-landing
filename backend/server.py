@@ -338,6 +338,35 @@ async def generate_amv(request: GenerateRequest):
         logger.error(f"Error starting generation: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
+def _friendly_error_message(raw: Optional[str]) -> Optional[str]:
+    """Map noisy FFmpeg / pipeline error strings to user-friendly text.
+
+    Keep the raw text accessible to operators via logs and `raw_error`,
+    but never let an end-user see 'rc=-9' or a 200-line stderr blob.
+    """
+    if not raw:
+        return None
+    low = raw.lower()
+    if "rc=-9" in low or "sigkill" in low or "out of memory" in low:
+        return (
+            "Render complexity exceeded the available memory. AniPulse "
+            "is retrying in lightweight mode -- give it another go."
+        )
+    if "no available clips" in low or "all clips shorter" in low:
+        return (
+            "Not enough footage for the requested edit length. Try a "
+            "shorter track or upload a few more clips."
+        )
+    if "timeout" in low:
+        return (
+            "A render step took longer than expected. AniPulse aborted "
+            "it safely -- please try again."
+        )
+    if "ffmpeg" in low or "rc=" in low:
+        return "An internal render step failed. AniPulse is logging the issue and you can safely retry."
+    return raw  # already friendly enough
+
+
 @api_router.get("/generate/{job_id}/status")
 async def get_generation_status(job_id: str):
     """
@@ -347,10 +376,28 @@ async def get_generation_status(job_id: str):
         job = await generation_job_service.get_job(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
-        
+
+        payload = job.get_public_status()
+
+        # Surface user-friendly error in addition to raw_error so the
+        # frontend can show a calm message.
+        raw_err = payload.get("error_message")
+        if raw_err:
+            payload["raw_error"] = raw_err
+            payload["error_message"] = _friendly_error_message(raw_err) or raw_err
+
+        # Surface footage + safe-mode diagnostics from the timeline if available.
+        if job.timeline:
+            payload["safe_mode"] = bool(getattr(job.timeline, "safe_mode", False))
+            payload["safe_mode_reason"] = getattr(job.timeline, "safe_mode_reason", None)
+            payload["footage_limited"] = bool(getattr(job.timeline, "footage_limited", False))
+            payload["footage_warning"] = getattr(job.timeline, "footage_warning", None)
+            payload["segment_count"] = len(job.timeline.segments or [])
+            payload["timeline_duration"] = float(getattr(job.timeline, "total_duration", 0.0))
+
         return {
             "success": True,
-            **job.get_public_status()
+            **payload,
         }
         
     except HTTPException:

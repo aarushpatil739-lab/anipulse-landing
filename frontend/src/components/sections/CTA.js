@@ -1,10 +1,12 @@
 import React from 'react';
 import { motion } from 'framer-motion';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '../ui/Button';
 import { Container } from '../ui/Container';
 import { ctaContent } from '../../lib/content';
 
 const CTA = () => {
+  const navigate = useNavigate();
   return (
     <section className="py-24 relative overflow-hidden" data-testid="cta-section">
       {/* Dramatic background */}
@@ -59,6 +61,7 @@ const CTA = () => {
               size="lg" 
               className="text-xl px-16 py-6 group"
               data-testid="cta-final"
+              onClick={() => navigate('/upload')}
             >
               <span className="mr-2">{ctaContent.buttonText}</span>
               <motion.span

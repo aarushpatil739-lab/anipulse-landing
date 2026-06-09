@@ -87,7 +87,19 @@ const Hero = () => {
             <Button variant="primary" size="lg" data-testid="cta-generate" onClick={() => navigate('/upload')}>
               {heroContent.primaryCTA} →
             </Button>
-            <Button variant="secondary" size="lg" data-testid="cta-demo">
+            <Button
+              variant="secondary"
+              size="lg"
+              data-testid="cta-demo"
+              onClick={() => {
+                const el = document.getElementById('demo');
+                if (el) {
+                  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                } else {
+                  navigate('/upload');
+                }
+              }}
+            >
               {heroContent.secondaryCTA}
             </Button>
           </motion.div>

@@ -29,6 +29,7 @@ from services.ffmpeg_availability import (
     ensure_available as ensure_ffmpeg_available,
     is_available as ffmpeg_is_available,
 )
+from services.safe_mode import evaluate as evaluate_safe_mode, memory_pressure_percent
 
 logger = logging.getLogger(__name__)
 
@@ -250,10 +251,40 @@ class ProcessingQueue:
         
         if not job.audio_analysis:
             raise ValueError("Audio analysis not available")
-        
-        # Convert audio analysis to dict
+
+        # ---- Safe Mode evaluation ------------------------------------
+        # Before building the timeline, decide whether this job should
+        # run in low-memory mode (small clip pool / long audio / high
+        # baseline memory pressure).
         audio_dict = job.audio_analysis.model_dump()
-        
+        clip_count = len(job.input_clips or [])
+        total_clip_dur = sum((c.get("duration") or 0.0) for c in (job.input_clips or []))
+        audio_dur = float(audio_dict.get("duration") or 0.0)
+        safe_decision = evaluate_safe_mode(
+            clip_count=clip_count,
+            total_clip_duration=total_clip_dur,
+            audio_duration=audio_dur,
+            preset=job.style,
+        )
+        # Stash on the job so render_service / API can read it.
+        if not getattr(job, "input_audio", None):
+            job.input_audio = {}
+        opts = job.input_audio.get("__render_opts") or {}
+        opts["safe_mode"] = safe_decision.enabled
+        opts["safe_mode_reason"] = safe_decision.reason
+        job.input_audio["__render_opts"] = opts
+        if safe_decision.enabled:
+            logger.warning(
+                "[%s] Entering SAFE MODE: %s (clips=%d, total_clip_dur=%.1fs, "
+                "audio=%.1fs, mem=%s)",
+                job.job_id,
+                safe_decision.reason,
+                clip_count,
+                total_clip_dur,
+                audio_dur,
+                memory_pressure_percent(),
+            )
+
         # Generate timeline
         generator = TimelineGenerator(
             audio_analysis=audio_dict,
@@ -263,7 +294,12 @@ class ProcessingQueue:
         )
         
         timeline = generator.generate()
-        
+
+        # Tag safe-mode info onto the timeline so the API status response
+        # can surface it to the frontend.
+        timeline.safe_mode = safe_decision.enabled
+        timeline.safe_mode_reason = safe_decision.reason
+
         # Store timeline in job
         job.timeline = timeline
         
@@ -316,6 +352,7 @@ class ProcessingQueue:
         render_opts = (job.input_audio or {}).get("__render_opts") or {}
         aspect_ratio = render_opts.get("aspect_ratio") or "16:9"
         vertical_mode = render_opts.get("vertical_mode") or "blurred"
+        safe_mode = bool(render_opts.get("safe_mode"))
 
         # NOTE on resolution: we use 720p by default because the Railway
         # trial plan caps the container at ~512MB RAM.  A 1080p libx264
@@ -323,7 +360,11 @@ class ProcessingQueue:
         # SIGKILLs ffmpeg (rc=-9).  720p output is still high quality and
         # downloads faster.  Override via env if you upgrade the plan:
         target_resolution = os.environ.get("ANIPULSE_OUTPUT_RES", "720p")
-        target_quality = os.environ.get("ANIPULSE_OUTPUT_QUALITY", "fast")
+        # Safe mode forces the cheapest quality preset regardless of env
+        # so memory peaks stay bounded.
+        target_quality = (
+            "fast" if safe_mode else os.environ.get("ANIPULSE_OUTPUT_QUALITY", "fast")
+        )
 
         export = await render_service.render(
             timeline=job.timeline,
@@ -333,6 +374,7 @@ class ProcessingQueue:
             quality=target_quality,
             aspect_ratio=aspect_ratio,
             vertical_mode=vertical_mode,
+            safe_mode=safe_mode,
         )
         
         # Store export info in job

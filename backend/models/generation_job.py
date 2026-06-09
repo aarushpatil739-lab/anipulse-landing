@@ -55,6 +55,15 @@ class GeneratedTimeline(BaseModel):
     avg_cut_duration: float
     style: str = "amv_default"
 
+    # Diagnostic context surfaced to the frontend so the creator can
+    # understand why a 4-minute track ended up as a 30-second AMV.
+    footage_limited: bool = False
+    footage_warning: Optional[str] = None
+    safe_mode: bool = False
+    safe_mode_reason: Optional[str] = None
+    audio_duration: Optional[float] = None
+    total_clip_duration: Optional[float] = None
+
 
 class ExportResult(BaseModel):
     """Final export information"""

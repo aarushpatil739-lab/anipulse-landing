@@ -46,7 +46,6 @@ class TimelineGenerator:
             seed: Random seed for testing
         """
         self.audio_analysis = audio_analysis
-        self.max_duration = min(max_duration, audio_analysis['duration'])
         self.style = style
 
         # Map the legacy "style" string to one of our 5 named presets so
@@ -60,10 +59,61 @@ class TimelineGenerator:
         # small clip library (longer cuts when there are only 3 clips).
         clip_count = len(clips_metadata)
         total_clip_dur = sum(c.get("duration", 0.0) for c in clips_metadata)
+        audio_dur = float(audio_analysis.get("duration") or 0.0)
+
+        # --- Footage-aware "effective" output duration ------------------
+        # AniPulse must never try to fill a 133s track with a single 18s
+        # clip -- that explodes the timeline into 50+ tiny trims and OOMs
+        # the Railway container.  Cap output by how much footage we can
+        # responsibly reuse.
+        #
+        #   safe_reuse_factor depends on clip count:
+        #     1 clip   -> 1.5x (very modest reuse)
+        #     2 clips  -> 2.0x
+        #     3-4      -> 3.0x
+        #     5-9      -> 4.0x
+        #     10+      -> 6.0x (essentially "as long as the music")
+        if clip_count <= 1:
+            reuse = 1.5
+        elif clip_count == 2:
+            reuse = 2.0
+        elif clip_count <= 4:
+            reuse = 3.0
+        elif clip_count <= 9:
+            reuse = 4.0
+        else:
+            reuse = 6.0
+        footage_cap = total_clip_dur * reuse if total_clip_dur > 0 else audio_dur
+        effective_duration = min(
+            max_duration,
+            audio_dur,
+            footage_cap,
+        )
+        # Always keep a floor so we don't accidentally drop to zero.
+        effective_duration = max(8.0, effective_duration)
+        self.max_duration = float(effective_duration)
+
+        self.footage_cap = footage_cap
+        self.reuse_factor = reuse
+        self.footage_limited = effective_duration < audio_dur - 1.0  # > 1s clipped
+        self.clip_count = clip_count
+        self.total_clip_duration = total_clip_dur
+
+        logger.info(
+            "TimelineGenerator | clips=%d total_clip_dur=%.1fs audio=%.1fs "
+            "reuse=%.1fx footage_cap=%.1fs -> effective_output=%.1fs%s",
+            clip_count,
+            total_clip_dur,
+            audio_dur,
+            reuse,
+            footage_cap,
+            effective_duration,
+            " (FOOTAGE LIMITED)" if self.footage_limited else "",
+        )
 
         self.pacing = PacingEngine(
             bpm=audio_analysis['bpm'],
-            audio_duration=audio_analysis['duration'],
+            audio_duration=effective_duration,
             clip_count=clip_count,
             total_clip_duration=total_clip_dur,
             preset=preset,
@@ -139,6 +189,31 @@ class TimelineGenerator:
 
         if not beats:
             raise ValueError("No beats detected in audio analysis")
+
+        # --- Hard adaptive segment cap ----------------------------------
+        # Even with our pacing improvements, an aggressive preset on a
+        # 180s track could theoretically generate 60+ segments which
+        # blows the Railway memory budget.  Apply a strict cap based on
+        # clip pool size + preset density.
+        # Floor of 6, ceiling of 36.
+        density_cap = {
+            "cinematic": 22,
+            "emotional": 18,
+            "velocity": 30,
+            "phonk": 28,
+            "aggressive": 36,
+        }.get(self.pacing.preset, 22)
+        # Pool-aware cap so a single-clip render never explodes into 30
+        # micro-trims of the same footage.
+        pool_cap = max(6, self.clip_count * 8)
+        self.max_segments = min(density_cap, pool_cap)
+        logger.info(
+            "Hard segment cap = %d (density_cap=%d, pool_cap=%d, preset=%s)",
+            self.max_segments,
+            density_cap,
+            pool_cap,
+            self.pacing.preset,
+        )
         
         # Generate segments beat by beat
         prev_transition = TransitionType.NONE
@@ -163,6 +238,19 @@ class TimelineGenerator:
                 is_drop=is_drop,
                 position_in_audio=beat_time
             )
+
+            # STABILITY: hard cap on total segment count. Stops a fast
+            # preset on a long track from producing 50+ tiny trims that
+            # explode Railway RAM.
+            if len(self.segments) >= self.max_segments:
+                logger.info(
+                    "Reached hard segment cap (%d). Stopping timeline "
+                    "generation at %.2fs / %.2fs.",
+                    self.max_segments,
+                    self.current_timeline_pos,
+                    self.max_duration,
+                )
+                break
             
             # STABILITY: Enforce minimum segment duration
             if cut_duration < MIN_SEGMENT_DURATION:
@@ -318,6 +406,17 @@ class TimelineGenerator:
         cut_durations = [seg.timeline_end - seg.timeline_start for seg in self.segments]
         avg_cut_duration = sum(cut_durations) / len(cut_durations) if cut_durations else 0.0
         
+        # Build a friendly footage warning when we had to clip the output
+        # so the frontend can display a non-scary message.
+        footage_warning = None
+        if self.footage_limited:
+            audio_dur = float(self.audio_analysis.get("duration") or 0.0)
+            footage_warning = (
+                f"Your footage is shorter than your music. AniPulse generated a "
+                f"{total_duration:.0f}s cinematic edit instead of forcing a "
+                f"{audio_dur:.0f}s timeline -- this keeps the edit quality high."
+            )
+
         # Create timeline object
         timeline = GeneratedTimeline(
             segments=self.segments,
@@ -325,7 +424,11 @@ class TimelineGenerator:
             transition_count=transition_count,
             effect_count=effect_count,
             avg_cut_duration=avg_cut_duration,
-            style=self.style
+            style=self.style,
+            footage_limited=self.footage_limited,
+            footage_warning=footage_warning,
+            audio_duration=float(self.audio_analysis.get("duration") or 0.0),
+            total_clip_duration=self.total_clip_duration,
         )
         
         logger.info(

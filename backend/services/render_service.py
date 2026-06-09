@@ -64,25 +64,35 @@ class RenderService:
         quality: str = "balanced",
         aspect_ratio: str = "16:9",
         vertical_mode: str = "blurred",
+        safe_mode: bool = False,
     ) -> ExportResult:
         """
         Render complete AMV from timeline
-        
-        Args:
-            timeline: Generated timeline with segments
-            audio_path: Path to music file
-            resolution: Target resolution (1080p, 720p)
-            fps: Target FPS
-            quality: Quality preset (high, balanced, fast)
-            aspect_ratio: Output aspect ratio (16:9, 9:16, 1:1)
-            vertical_mode: How to fit 16:9 source into 9:16/1:1 ("blurred" or "crop")
-            
-        Returns:
-            ExportResult with final video metadata
+
+        Safe mode (true when the orchestrator detected memory pressure
+        or insufficient footage) strips effects + complex transitions
+        and forces ultrafast x264 settings to keep the render reliable
+        on small containers.
         """
+        if safe_mode:
+            # Mutate a shallow copy of the timeline: drop every effect
+            # and reduce all transitions to None (clean hard cuts).
+            # We don't deep-copy segments because each one is a Pydantic
+            # model -- assigning fields is fine.
+            for seg in timeline.segments:
+                seg.effect = None
+                seg.transition = None
+            logger.warning(
+                "Render in SAFE MODE: %d segments, effects=stripped, "
+                "transitions=hard-cut only (%s)",
+                len(timeline.segments),
+                timeline.safe_mode_reason or "memory budget",
+            )
+
         logger.info(
             f"Starting render: {len(timeline.segments)} segments, "
             f"{timeline.total_duration:.2f}s, aspect={aspect_ratio} ({vertical_mode})"
+            f"{' [SAFE MODE]' if safe_mode else ''}"
         )
         start_time = time.time()
         
@@ -144,12 +154,23 @@ class RenderService:
                 f"duration={integrity.duration:.2f}s, "
                 f"elapsed={elapsed_ms/1000:.1f}s"
             )
-            
+            # Always clean intermediates on success so disk doesn't fill
+            # over time on long-running Railway containers.
+            try:
+                await self._cleanup_intermediates()
+            except Exception as cleanup_exc:
+                logger.warning(f"Post-success cleanup error (non-fatal): {cleanup_exc}")
+
             return export
             
         except Exception as e:
             logger.error(f"Render failed: {e}", exc_info=True)
-            await self._cleanup_intermediates()
+            # Always attempt cleanup on failure so we don't leak temp
+            # files; never let cleanup mask the original exception.
+            try:
+                await self._cleanup_intermediates()
+            except Exception as cleanup_exc:
+                logger.warning(f"Post-failure cleanup error (suppressed): {cleanup_exc}")
             raise
     
     async def _process_all_segments(
